@@ -1,6 +1,6 @@
 <div align="center">
 
-<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&height=220&color=gradient&text=Surga%20Bot&fontSize=55&fontAlignY=35&desc=Frontend%20Developer%20%E2%80%A2%20Surga%20Developer&descAlignY=58&animation=fadeIn" />
+<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&height=220&color=gradient&text=Surga%20SI&fontSize=55&fontAlignY=35&desc=Frontend%20Developer%20%E2%80%A2%20Surga%20Developer&descAlignY=58&animation=fadeIn" />
 
 
 <br/>
