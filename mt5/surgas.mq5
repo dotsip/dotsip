@@ -2,13 +2,13 @@
 //|                                                 RiskRadarHUD.mq5 |
 //|  Radar Risiko + Fast Bulk Close + One-Click Trading              |
 //|  + Hedge 1:1 + Reverse + Auto Target (+) & Auto Cutloss (-)      |
-//|  + [PRO v4.2] REVERSE BOT (EXCLUSIVE TP/SL - NO INTERFERENCE)    |
+//|  + [PRO v4.3] CLEAN ENGINE - STRICT TP/SL ONLY (NO AUTO-CUT)     |
 //|                                      https://cindo.pages.dev     |
 //+------------------------------------------------------------------+
 #property copyright   "Mochamad Tabrani & Antigravity AI"
 #property link        "https://cindo.pages.dev"
-#property version     "4.20"
-#property description "EA Pro: Zero-Level Reverse Bot (Strict TP/SL Execution, No Premature Close)"
+#property version     "4.30"
+#property description "EA Pro: 100% Strict TP/SL Reverse Martingale (Zero Interference)"
 
 #include <Trade\Trade.mqh>
 
@@ -33,26 +33,17 @@ input group "=== PENGATURAN TRADING CEPAT (ONE-CLICK MANUAL) ==="
 input double          InpDefaultLot        = 0.01;  // Ukuran Lot Default Manual
 input double          InpLotStep           = 0.01;  // Nilai Tambah/Kurang Lot tombol [-] [+]
 
-input group "=== AUTO TARGET KERANJANG (HANYA UNTUK POSISI MANUAL) ==="
-input double          InpBasketTargetMoney = 0.0;   // 🎯 Target Profit Uang ($) Manual (0 = Nonaktif)
-input double          InpBasketMaxLossMoney= 0.0;   // 🛑 Cutloss Manual ($) (0 = Nonaktif)
-input bool            InpEnableTrailingBE  = false; // 🏃 Trailing Manual (Default: Nonaktif agar tidak ganggu Bot)
-input int             InpTrailingStartPts  = 50;    // Jarak Profit (pts) untuk Mulai Aktifkan Trailing
-input int             InpTrailingLockPts   = 15;    // Kunci Minimal Profit (pts) saat harga retrace
-
-input group "=== PENGATURAN RADAR RISIKO & ZONA KERANJANG ==="
+input group "=== PENGATURAN RADAR RISIKO ==="
 input int             InpWarningPts        = 500;   // Jarak Pts ke SO: Batas Status WASPADA
 input int             InpDangerPts         = 200;   // Jarak Pts ke SO: Batas Status BAHAYA
 input bool            InpShowSOLine        = true;  // Gambar Garis Level Stop Out (MC) di Chart
 input bool            InpShowBELine        = true;  // Gambar Garis Titik Impas (Breakeven) di Chart
-input bool            InpAutoCutEmergency  = false; // [AUTO CUT] Tutup Semua jika masuk Status BAHAYA
 
 input group "=== PENGATURAN NOTIFIKASI / ALERT ==="
 input bool            InpEnableAlert       = true;  // Popup Alert di layar MT5 saat TP/SL/Hedge kena?
 input bool            InpEnablePush        = false; // Kirim Notifikasi ke HP (MetaQuotes ID)?
-input bool            InpEnableEmail       = false; // Kirim Notifikasi via Email?
 
-input group "=== PENGATURAN BULK CLOSE & FILTER ==="
+input group "=== PENGATURAN FILTER & MAGIC NUMBER ==="
 input int             InpSlippage          = 30;    // Toleransi slippage (pts)
 input long            InpMagicBot          = 888100;// Magic Number Khusus Robot Zero-Level
 input long            InpMagicFilter       = 0;     // Magic Filter untuk HUD (0 = pantau semua)
@@ -87,7 +78,6 @@ int               g_digits;
 uint              g_lastUiTick      = 0;
 bool              g_isClosing       = false;
 bool              g_isMinimized     = false;
-bool              g_trailingActive  = false;
 ENUM_RISK_STATUS  g_currentStatus   = RISK_SAFE;
 double            g_tradeLot        = 0.01;
 CTrade            g_trade;
@@ -112,7 +102,7 @@ void              ExecuteReversePosition();
 void              ExecuteCloseHalf();
 void              CheckDirectionalCrossing();
 void              OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot);
-void              UpdateChartLines(double soPrice, double bePrice, bool hasExposure, bool isNotHedged, string beNote);
+void              UpdateChartLines(double soPrice, double bePrice, bool hasExposure, bool isNotHedged);
 ENUM_ORDER_TYPE_FILLING GetOptimalFilling(string symbol);
 double            NormalizeLotSize(double lot);
 void              CreateBox(string name, int x, int y, int w, int h, color bg, color border);
@@ -140,7 +130,7 @@ int OnInit()
    DeleteRadarObjects();
    CreateRadarHUD();
 
-   Print("=== RiskRadarHUD v4.20 TP/SL Murni Tanpa Intervensi Aktif ===");
+   Print("=== RiskRadarHUD v4.30 Clean Engine Aktif ===");
    EventSetTimer(1);
    return(INIT_SUCCEEDED);
 }
@@ -190,7 +180,7 @@ void CheckDirectionalCrossing()
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong t = PositionGetTicket(i);
-      if(PositionSelectByTicket(t))
+      if(t > 0)
       {
          if(PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetInteger(POSITION_MAGIC) == InpMagicBot)
             botPositions++;
@@ -218,7 +208,7 @@ void CheckDirectionalCrossing()
    double targetLevelUp = MathFloor(currentBid / step) * step;
    if(g_lastPrice < targetLevelUp && currentBid >= targetLevelUp)
    {
-      Print(StringFormat("🚀 [CROSSING BUY] Melintas naik dari %.2f ke %.2f (Level: %.2f)!", g_lastPrice, currentBid, targetLevelUp));
+      Print(StringFormat("🚀 [CROSSING BUY] Harga melintas naik dari %.2f ke %.2f (Level: %.2f)!", g_lastPrice, currentBid, targetLevelUp));
       OpenZeroBotOrder(POSITION_TYPE_BUY, g_currentBotLot);
       g_lastPrice = currentBid;
       return;
@@ -228,7 +218,7 @@ void CheckDirectionalCrossing()
    double targetLevelDown = MathCeil(currentBid / step) * step;
    if(g_lastPrice > targetLevelDown && currentBid <= targetLevelDown)
    {
-      Print(StringFormat("🔻 [CROSSING SELL] Melintas turun dari %.2f ke %.2f (Level: %.2f)!", g_lastPrice, currentBid, targetLevelDown));
+      Print(StringFormat("🔻 [CROSSING SELL] Harga melintas turun dari %.2f ke %.2f (Level: %.2f)!", g_lastPrice, currentBid, targetLevelDown));
       OpenZeroBotOrder(POSITION_TYPE_SELL, g_currentBotLot);
       g_lastPrice = currentBid;
       return;
@@ -238,7 +228,7 @@ void CheckDirectionalCrossing()
 }
 
 //+------------------------------------------------------------------+
-//| [6] TRADE TRANSACTION - REVERSE MARTINGALE PRESISI TIKET         |
+//| [6] TRADE TRANSACTION - REVERSE MARTINGALE STRICT LOGGING        |
 //+------------------------------------------------------------------+
 void OnTradeTransaction(const MqlTradeTransaction& trans,
                         const MqlTradeRequest& request,
@@ -261,10 +251,20 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
    {
       g_lastManagedDeal = dealTicket;
       double profit     = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+      double closePrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+
+      string reasonText = "TIDAK DIKETAHUI";
+      if(dealReason == DEAL_REASON_TP) reasonText = "🎯 TAKE PROFIT";
+      else if(dealReason == DEAL_REASON_SL) reasonText = "❌ STOP LOSS";
+      else if(dealReason == DEAL_REASON_CLIENT) reasonText = "🖐️ DITUTUP MANUAL";
+      else if(dealReason == DEAL_REASON_SO) reasonText = "🚨 STOP OUT BROKER";
+
+      Print(StringFormat("📋 [DEAL OUT DETECTED] Tiket: #%I64d | Harga: %.2f | Profit: $%.2f | Alasan: %s",
+            dealTicket, closePrice, profit, reasonText));
 
       ENUM_POSITION_TYPE origPosType = (dealType == DEAL_TYPE_SELL) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
 
-      // KASUS 1: TAKE PROFIT MURNI TERSENTUH
+      // KASUS 1: TAKE PROFIT MURNI
       if(dealReason == DEAL_REASON_TP || profit > 0)
       {
          string msg = StringFormat("🎯 [STEP %d TP HIT!] Profit: $%.2f. Reset ke Step 1 & Lanjut Tren...", g_currentStep, profit);
@@ -279,7 +279,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
             OpenZeroBotOrder(origPosType, g_currentBotLot);
          }
       }
-      // KASUS 2: STOP LOSS MURNI TERSENTUH
+      // KASUS 2: STOP LOSS MURNI
       else if(dealReason == DEAL_REASON_SL || profit < 0)
       {
          if(g_currentStep >= InpMaxSteps)
@@ -300,7 +300,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          g_currentStep++;
          g_currentBotLot = NormalizeLotSize(g_currentBotLot * InpLotMultiplier);
 
-         string msg = StringFormat("🛑 [STEP %d SL HIT!] Eksekusi Balik Arah ke STEP %d (Lot: %.2f)...", g_currentStep - 1, g_currentStep, g_currentBotLot);
+         string msg = StringFormat("🛑 [STEP %d SL HIT!] Balik Arah ke STEP %d (Lot: %.2f)...", g_currentStep - 1, g_currentStep, g_currentBotLot);
          Print(msg);
          if(InpEnableAlert) Alert(msg);
 
@@ -314,7 +314,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 }
 
 //+------------------------------------------------------------------+
-//| [7] EKSEKUTOR ORDER DENGAN TP/SL PRESISI DARI ENTRY RIIL         |
+//| [7] EKSEKUTOR ORDER TP/SL PRESISI DARI ENTRY RIIL                |
 //+------------------------------------------------------------------+
 void OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot)
 {
@@ -353,7 +353,7 @@ void OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot)
 }
 
 //+------------------------------------------------------------------+
-//| [8] FITUR PENGAMAN & TOOLS LANJUTAN: HEDGE, REVERSE, BULK CLOSE   |
+//| [8] TOOLS MANUAL HUD: HEDGE, REVERSE, BULK CLOSE                 |
 //+------------------------------------------------------------------+
 void ExecuteEmergencyHedge()
 {
@@ -361,7 +361,7 @@ void ExecuteEmergencyHedge()
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong t = PositionGetTicket(i);
-      if(PositionSelectByTicket(t))
+      if(t > 0)
       {
          if(PositionGetString(POSITION_SYMBOL) == _Symbol)
          {
@@ -404,7 +404,7 @@ void ExecuteReversePosition()
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong t = PositionGetTicket(i);
-      if(PositionSelectByTicket(t))
+      if(t > 0)
       {
          if(PositionGetString(POSITION_SYMBOL) == _Symbol)
          {
@@ -449,7 +449,7 @@ void ExecuteCloseHalf()
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong t = PositionGetTicket(i);
-      if(PositionSelectByTicket(t))
+      if(t > 0)
       {
          if(PositionGetString(POSITION_SYMBOL) == _Symbol)
          {
@@ -506,7 +506,7 @@ void FastBulkClose(bool currentSymbolOnly)
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong t = PositionGetTicket(i);
-      if(PositionSelectByTicket(t))
+      if(t > 0)
       {
          string sym = PositionGetString(POSITION_SYMBOL);
          if(currentSymbolOnly && sym != _Symbol) continue;
@@ -623,7 +623,7 @@ void OnChartEvent(const int id, const long& lparam, const double& dparam, const 
 }
 
 //+------------------------------------------------------------------+
-//| [10] Kalkulasi & Update Radar Risiko + Zona Impas Keranjang      |
+//| [10] Kalkulasi & Update Radar Risiko (Murni Display)              |
 //+------------------------------------------------------------------+
 void UpdateRiskRadar()
 {
@@ -641,7 +641,7 @@ void UpdateRiskRadar()
    for(int i = posCountAll - 1; i >= 0; i--)
    {
       ulong t = PositionGetTicket(i);
-      if(PositionSelectByTicket(t))
+      if(t > 0)
       {
          if(PositionGetString(POSITION_SYMBOL) == _Symbol)
          {
@@ -663,7 +663,7 @@ void UpdateRiskRadar()
       g_isHedgeLocked = false;
       g_currentStep   = 1;
       g_currentBotLot = InpStartLot;
-      Print("🔄 SIKLUS DI-RESET: Operator telah menutup posisi. Robot standby kembali!");
+      Print("🔄 SIKLUS DI-RESET: Operator telah menutup posisi. Robot standby!");
    }
 
    double avgBuyPrice  = (buyLots  > 0) ? (buyValSum  / buyLots)  : 0;
@@ -671,21 +671,7 @@ void UpdateRiskRadar()
    double netLots      = buyLots - sellLots;
    bool   hasExposure  = (buyLots > 0 || sellLots > 0);
 
-   // Target Keranjang (Hanya jalan jika InpBasketTargetMoney > 0 dan BUKAN posisi bot murni)
-   if(InpBasketTargetMoney > 0 && symbolPL >= InpBasketTargetMoney && !g_isClosing && posCountCurr > 0)
-   {
-      Print(StringFormat("🎯 TARGET PROFIT KERANJANG TERCAPAI ($%.2f)! Bulk Close...", symbolPL));
-      FastBulkClose(true);
-      return;
-   }
-
-   double maxLossLimit = -MathAbs(InpBasketMaxLossMoney);
-   if(InpBasketMaxLossMoney > 0 && symbolPL <= maxLossLimit && !g_isClosing && posCountCurr > 0)
-   {
-      Print(StringFormat("🛑 MAX LOSS TERSENTUH ($%.2f)! Cutloss Darurat...", symbolPL));
-      FastBulkClose(true);
-      return;
-   }
+   // CATATAN: Semua logika auto bulk-close telah dihapus total dari sini!
 
    double bePrice      = 0;
    string netBiasStr   = "NETRAL (0.00 Lot)";
@@ -693,7 +679,6 @@ void UpdateRiskRadar()
    string negZoneStr   = "-";
    string distZoneStr  = "-";
    color  distZoneClr  = COLOR_TEXT_DIM;
-   string beLabelTxt   = "";
    double diffPts      = 0;
 
    if(hasExposure)
@@ -706,7 +691,6 @@ void UpdateRiskRadar()
             netBiasStr = StringFormat("+%.2f Lot BUY (Net Long)", netLots);
             posZoneStr = StringFormat("> %s (Naik = Untung)", DoubleToString(bePrice, g_digits));
             negZoneStr = StringFormat("< %s (Turun = Rugi)", DoubleToString(bePrice, g_digits));
-            beLabelTxt = " (▲ Untung, ▼ Rugi)";
 
             diffPts = (bid - bePrice) / g_point;
             if(diffPts >= 0)
@@ -726,7 +710,6 @@ void UpdateRiskRadar()
             netBiasStr = StringFormat("%.2f Lot SELL (Net Short)", netLots);
             posZoneStr = StringFormat("< %s (Turun = Untung)", DoubleToString(bePrice, g_digits));
             negZoneStr = StringFormat("> %s (Naik = Rugi)", DoubleToString(bePrice, g_digits));
-            beLabelTxt = " (▼ Untung, ▲ Rugi)";
 
             diffPts = (bePrice - ask) / g_point;
             if(diffPts >= 0)
@@ -740,19 +723,6 @@ void UpdateRiskRadar()
                distZoneClr = COLOR_WARN;
             }
          }
-
-         // Trailing Keranjang hanya jalan jika diaktifkan user secara sengaja
-         if(InpEnableTrailingBE && posCountCurr > 0)
-         {
-            if(!g_trailingActive && diffPts >= InpTrailingStartPts)
-               g_trailingActive = true;
-            else if(g_trailingActive && diffPts <= InpTrailingLockPts && !g_isClosing)
-            {
-               FastBulkClose(true);
-               g_trailingActive = false;
-               return;
-            }
-         }
       }
       else
       {
@@ -761,7 +731,6 @@ void UpdateRiskRadar()
          negZoneStr  = "Kebal Fluktuasi Pasar";
          distZoneStr = "🔒 Posisi Hedging Imbang";
          distZoneClr = COLOR_ACCENT;
-         g_trailingActive = false;
       }
    }
 
@@ -811,7 +780,6 @@ void UpdateRiskRadar()
          statusColor     = COLOR_DANGER;
          statusText      = "🚨 KRITIS / BAHAYA!";
          g_currentStatus = RISK_CRITICAL;
-         if(InpAutoCutEmergency && !g_isClosing) FastBulkClose(true);
       }
       else if(ptsToSO <= InpWarningPts || (marginLevel > 0 && marginLevel <= 300.0))
       {
@@ -869,14 +837,14 @@ void UpdateRiskRadar()
    SetTxt(PREFIX + "BTN_CLOSE_CURR", StringFormat("⚡ BULK CLOSE %s (%d Posisi)", _Symbol, posCountCurr), clrWhite);
    SetTxt(PREFIX + "BTN_CLOSE_ALL",  StringFormat("💀 PANIC CLOSE ALL AKUN (%d Posisi)", posCountAll), clrWhite);
 
-   UpdateChartLines(soPrice, bePrice, hasExposure, totalPtVal > 0, beLabelTxt);
+   UpdateChartLines(soPrice, bePrice, hasExposure, totalPtVal > 0);
    ChartRedraw();
 }
 
 //+------------------------------------------------------------------+
 //| [11] Garis Visual Chart & HUD Designer                           |
 //+------------------------------------------------------------------+
-void UpdateChartLines(double soPrice, double bePrice, bool hasExposure, bool isNotHedged, string beNote)
+void UpdateChartLines(double soPrice, double bePrice, bool hasExposure, bool isNotHedged)
 {
    string soLineName = PREFIX + "LINE_SO";
    string beLineName = PREFIX + "LINE_BE";
@@ -906,7 +874,7 @@ void UpdateChartLines(double soPrice, double bePrice, bool hasExposure, bool isN
       ObjectSetInteger(0, beLineName, OBJPROP_COLOR, COLOR_ACCENT);
       ObjectSetInteger(0, beLineName, OBJPROP_STYLE, STYLE_DOT);
       ObjectSetInteger(0, beLineName, OBJPROP_WIDTH, 1);
-      ObjectSetString (0, beLineName, OBJPROP_TEXT,  " 🎯 TITIK IMPAS: " + DoubleToString(bePrice, g_digits) + beNote);
+      ObjectSetString (0, beLineName, OBJPROP_TEXT,  " 🎯 TITIK IMPAS: " + DoubleToString(bePrice, g_digits));
    }
    else
       ObjectDelete(0, beLineName);
@@ -931,7 +899,6 @@ void CreateRadarHUD()
    int h = 675;
    CreateBox(PREFIX + "MainBg", x, y, w, h, COLOR_PANEL_BG, COLOR_BORDER);
 
-   // Header Panel
    CreateBox(PREFIX + "HeaderBg", x + 5, y + 5, w - 10, 36, COLOR_CARD_BG, COLOR_BORDER);
    CreateLbl(PREFIX + "Title", x + 15, y + 13, "🛡️ ZERO-LEVEL RADAR PRO", COLOR_ACCENT, 10, true);
    CreateLbl(PREFIX + "Badge", x + w - 50, y + 13, "● STATUS: AMAN", COLOR_SAFE, 9, true, ANCHOR_RIGHT_UPPER);
@@ -939,13 +906,11 @@ void CreateRadarHUD()
 
    int curY = y + 46;
 
-   // STATUS ZERO-BOT BANNER
    CreateBox(PREFIX + "SubHead", x + 5, curY, w - 10, 20, C'20,25,32', COLOR_BORDER);
    CreateLbl(PREFIX + "L_ZeroInfo", x + 15, curY + 4, "🤖 ZERO-BOT: STANDBY MENUNGGU CROSSING", COLOR_ACCENT, 8, true);
 
    curY += 25;
 
-   // CARD TRADING CEPAT MANUAL
    CreateBox(PREFIX + "CardTrade", x + 5, curY, w - 10, 115, COLOR_CARD_BG, COLOR_BORDER);
    CreateLbl(PREFIX + "L_LotLabel", x + 15, curY + 8, "Volume Lot Manual:", COLOR_TEXT_DIM, 8);
    CreateBtn(PREFIX + "BTN_LOT_MINUS", x + 145, curY + 5, 34, 20, "-", COLOR_TEXT_VAL, C'45,50,65');
@@ -963,7 +928,6 @@ void CreateRadarHUD()
 
    curY += 123;
 
-   // CARD 1: KEUANGAN & TARGET KERANJANG
    CreateBox(PREFIX + "Card1", x + 5, curY, w - 10, 85, COLOR_CARD_BG, COLOR_BORDER);
    CreateLbl(PREFIX + "L_Bal",  x + 15, curY + 8,  "Saldo Akun:",  COLOR_TEXT_DIM, 8);
    CreateLbl(PREFIX + "V_Bal",  x + 115, curY + 8, "$0.00",        COLOR_TEXT_VAL, 8, true);
@@ -973,14 +937,11 @@ void CreateRadarHUD()
    CreateLbl(PREFIX + "L_PL",   x + 15, curY + 32, "Simbol Floating P/L:", COLOR_TEXT_DIM, 8);
    CreateLbl(PREFIX + "V_PL",   x + w - 15, curY + 32, "$0.00 (0 pts)", COLOR_TEXT_VAL, 9, true, ANCHOR_RIGHT_UPPER);
 
-   string targetTxt  = (InpBasketTargetMoney > 0)  ? StringFormat("🎯 Target (+): +$%.2f", InpBasketTargetMoney)  : "🎯 Target: OFF";
-   string cutlossTxt = (InpBasketMaxLossMoney > 0) ? StringFormat("🛑 Cutloss (-): -$%.2f", InpBasketMaxLossMoney) : "🛑 Cutloss: OFF";
-   CreateLbl(PREFIX + "L_Target",  x + 15, curY + 56, targetTxt,  COLOR_SAFE,   8, true);
-   CreateLbl(PREFIX + "L_Cutloss", x + 220, curY + 56, cutlossTxt, COLOR_DANGER, 8, true);
+   CreateLbl(PREFIX + "L_Target",  x + 15, curY + 56, "TP Jarak: $1.00 (10 Pips)",  COLOR_SAFE,   8, true);
+   CreateLbl(PREFIX + "L_Cutloss", x + 220, curY + 56, "SL Jarak: $1.00 (10 Pips)", COLOR_DANGER, 8, true);
 
    curY += 92;
 
-   // CARD 2: ANALISIS EXPOSURE & ZONA IMPAS
    CreateBox(PREFIX + "Card2", x + 5, curY, w - 10, 130, COLOR_CARD_BG, COLOR_BORDER);
    CreateLbl(PREFIX + "L_ExpTitle", x + 15, curY + 6, "ANALISIS KERANJANG & ZONA IMPAS", COLOR_ACCENT, 8, true);
    CreateLbl(PREFIX + "L_BuyExp",   x + 15, curY + 25, "Buy Exposure:",  COLOR_TEXT_DIM, 8);
@@ -998,7 +959,6 @@ void CreateRadarHUD()
 
    curY += 137;
 
-   // CARD 3: DETEKTOR MARGIN CALL / STOP OUT
    CreateBox(PREFIX + "Card3", x + 5, curY, w - 10, 105, COLOR_CARD_BG, COLOR_BORDER);
    CreateLbl(PREFIX + "L_RadarTitle", x + 15, curY + 6, "DETEKTOR MARGIN CALL / STOP OUT", COLOR_WARN, 8, true);
    CreateLbl(PREFIX + "L_ML",     x + 15, curY + 26, "Margin Level:",  COLOR_TEXT_DIM, 8);
@@ -1012,7 +972,6 @@ void CreateRadarHUD()
 
    curY += 112;
 
-   // TOMBOL BULK CLOSE
    CreateBtn(PREFIX + "BTN_CLOSE_CURR", x + 5, curY, w - 10, 36, "⚡ BULK CLOSE SYMBOL (0 Posisi)", clrWhite, COLOR_DANGER);
    curY += 41;
    CreateBtn(PREFIX + "BTN_CLOSE_ALL",  x + 5, curY, w - 10, 24, "💀 PANIC CLOSE ALL AKUN (0 Posisi)", COLOR_TEXT_DIM, C'38,42,54');
@@ -1036,7 +995,7 @@ int CountActivePositions(bool currentOnly)
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong t = PositionGetTicket(i);
-      if(PositionSelectByTicket(t))
+      if(t > 0)
       {
          long magic = PositionGetInteger(POSITION_MAGIC);
          if(InpMagicFilter != 0 && magic != InpMagicFilter) continue;
