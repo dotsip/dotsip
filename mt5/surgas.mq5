@@ -2,13 +2,13 @@
 //|                                                 RiskRadarHUD.mq5 |
 //|  Radar Risiko + Fast Bulk Close + One-Click Trading              |
 //|  + Hedge 1:1 + Reverse + Auto Target (+) & Auto Cutloss (-)      |
-//|  + [PRO v4.1] FULL AUTO REVERSE BOT (DYNAMIC ENTRY TP/SL)        |
+//|  + [PRO v4.2] REVERSE BOT (EXCLUSIVE TP/SL - NO INTERFERENCE)    |
 //|                                      https://cindo.pages.dev     |
 //+------------------------------------------------------------------+
 #property copyright   "Mochamad Tabrani & Antigravity AI"
 #property link        "https://cindo.pages.dev"
-#property version     "4.10"
-#property description "EA Pro: Full Auto Directional Crossing & Reverse Martingale (Dynamic Entry-Based TP/SL)"
+#property version     "4.20"
+#property description "EA Pro: Zero-Level Reverse Bot (Strict TP/SL Execution, No Premature Close)"
 
 #include <Trade\Trade.mqh>
 
@@ -21,7 +21,7 @@ input double          InpStartLot          = 0.01;      // Lot Dasar Awal (Step 
 input double          InpLotMultiplier     = 2.0;       // Faktor Pengali Martingale (2.0x)
 input int             InpMaxSteps          = 6;         // Batas Maksimal Step (Default: 6)
 input double          InpPriceInterval     = 1.0;       // Jarak Level Angka Bulat Pemicu ($1.00)
-input double          InpTargetDistance    = 1.0;       // Jarak TP & SL Presisi dari Harga Entry ($1.00 = 10 Pips)
+input double          InpTargetDistance    = 1.0;       // Jarak TP & SL Presisi dari Entry ($1.00 = 10 Pips)
 input bool            InpHedgeOnMaxStep    = true;      // 🔒 Kunci Akun (Hedge 1:1) jika Step 6 Kena SL?
 
 input group "=== PENGATURAN TAMPILAN PANEL (WIDESCREEN ANTI TUMPUK) ==="
@@ -33,10 +33,10 @@ input group "=== PENGATURAN TRADING CEPAT (ONE-CLICK MANUAL) ==="
 input double          InpDefaultLot        = 0.01;  // Ukuran Lot Default Manual
 input double          InpLotStep           = 0.01;  // Nilai Tambah/Kurang Lot tombol [-] [+]
 
-input group "=== AUTO TARGET KERANJANG (+PROFIT & -CUTLOSS) ==="
-input double          InpBasketTargetMoney = 50.0;  // 🎯 Target Profit Uang ($) Tutup Otomatis (0 = Nonaktif)
-input double          InpBasketMaxLossMoney= 100.0; // 🛑 Target Rugi Maksimal ($) Cutloss Otomatis (0 = Nonaktif)
-input bool            InpEnableTrailingBE  = true;  // 🏃 Aktifkan Trailing Breakeven Pengunci Profit?
+input group "=== AUTO TARGET KERANJANG (HANYA UNTUK POSISI MANUAL) ==="
+input double          InpBasketTargetMoney = 0.0;   // 🎯 Target Profit Uang ($) Manual (0 = Nonaktif)
+input double          InpBasketMaxLossMoney= 0.0;   // 🛑 Cutloss Manual ($) (0 = Nonaktif)
+input bool            InpEnableTrailingBE  = false; // 🏃 Trailing Manual (Default: Nonaktif agar tidak ganggu Bot)
 input int             InpTrailingStartPts  = 50;    // Jarak Profit (pts) untuk Mulai Aktifkan Trailing
 input int             InpTrailingLockPts   = 15;    // Kunci Minimal Profit (pts) saat harga retrace
 
@@ -140,7 +140,7 @@ int OnInit()
    DeleteRadarObjects();
    CreateRadarHUD();
 
-   Print("=== RiskRadarHUD v4.10 Dynamic Entry-Based TP/SL Aktif ===");
+   Print("=== RiskRadarHUD v4.20 TP/SL Murni Tanpa Intervensi Aktif ===");
    EventSetTimer(1);
    return(INIT_SUCCEEDED);
 }
@@ -262,10 +262,9 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
       g_lastManagedDeal = dealTicket;
       double profit     = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
 
-      // Identifikasi arah posisi awal sebelum ditutup
       ENUM_POSITION_TYPE origPosType = (dealType == DEAL_TYPE_SELL) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
 
-      // KASUS 1: TAKE PROFIT TERSENTUH
+      // KASUS 1: TAKE PROFIT MURNI TERSENTUH
       if(dealReason == DEAL_REASON_TP || profit > 0)
       {
          string msg = StringFormat("🎯 [STEP %d TP HIT!] Profit: $%.2f. Reset ke Step 1 & Lanjut Tren...", g_currentStep, profit);
@@ -277,11 +276,10 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 
          if(InpEnableZeroBot && !g_isHedgeLocked)
          {
-            // Buka posisi baru searah tren dengan kalkulasi TP/SL dari entry baru
             OpenZeroBotOrder(origPosType, g_currentBotLot);
          }
       }
-      // KASUS 2: STOP LOSS TERSENTUH
+      // KASUS 2: STOP LOSS MURNI TERSENTUH
       else if(dealReason == DEAL_REASON_SL || profit < 0)
       {
          if(g_currentStep >= InpMaxSteps)
@@ -308,7 +306,6 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 
          if(InpEnableZeroBot && !g_isHedgeLocked)
          {
-            // Buka posisi kebalikan dengan kalkulasi TP/SL dari entry baru
             ENUM_POSITION_TYPE reverseType = (origPosType == POSITION_TYPE_BUY) ? POSITION_TYPE_SELL : POSITION_TYPE_BUY;
             OpenZeroBotOrder(reverseType, g_currentBotLot);
          }
@@ -324,7 +321,7 @@ void OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot)
    lot = NormalizeLotSize(lot);
    double tp = 0.0;
    double sl = 0.0;
-   double dist = InpTargetDistance; // $1.00 dari harga entry
+   double dist = InpTargetDistance;
    if(dist <= 0) dist = 1.0;
 
    g_trade.SetExpertMagicNumber(InpMagicBot);
@@ -332,7 +329,6 @@ void OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot)
    if(type == POSITION_TYPE_BUY)
    {
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-      // TP dan SL dihitung murni dari harga ASK eksekusi riil
       tp = NormalizeDouble(ask + dist, g_digits);
       sl = NormalizeDouble(ask - dist, g_digits);
 
@@ -345,7 +341,6 @@ void OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot)
    else
    {
       double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      // TP dan SL dihitung murni dari harga BID eksekusi riil
       tp = NormalizeDouble(bid - dist, g_digits);
       sl = NormalizeDouble(bid + dist, g_digits);
 
@@ -676,6 +671,7 @@ void UpdateRiskRadar()
    double netLots      = buyLots - sellLots;
    bool   hasExposure  = (buyLots > 0 || sellLots > 0);
 
+   // Target Keranjang (Hanya jalan jika InpBasketTargetMoney > 0 dan BUKAN posisi bot murni)
    if(InpBasketTargetMoney > 0 && symbolPL >= InpBasketTargetMoney && !g_isClosing && posCountCurr > 0)
    {
       Print(StringFormat("🎯 TARGET PROFIT KERANJANG TERCAPAI ($%.2f)! Bulk Close...", symbolPL));
@@ -745,6 +741,7 @@ void UpdateRiskRadar()
             }
          }
 
+         // Trailing Keranjang hanya jalan jika diaktifkan user secara sengaja
          if(InpEnableTrailingBE && posCountCurr > 0)
          {
             if(!g_trailingActive && diffPts >= InpTrailingStartPts)
