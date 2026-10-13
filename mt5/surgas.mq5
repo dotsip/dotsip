@@ -2,13 +2,13 @@
 //|                                                 RiskRadarHUD.mq5 |
 //|  Radar Risiko + Fast Bulk Close + One-Click Trading              |
 //|  + Hedge 1:1 + Reverse + Auto Target (+) & Auto Cutloss (-)      |
-//|  + [PRO v4.3] CLEAN ENGINE - STRICT TP/SL ONLY (NO AUTO-CUT)     |
+//|  + [PRO v4.4] AUTO-CALIBRATED TP/SL (SLIPPAGE-IMMUNE ENGINE)     |
 //|                                      https://cindo.pages.dev     |
 //+------------------------------------------------------------------+
 #property copyright   "Mochamad Tabrani & Antigravity AI"
 #property link        "https://cindo.pages.dev"
-#property version     "4.30"
-#property description "EA Pro: 100% Strict TP/SL Reverse Martingale (Zero Interference)"
+#property version     "4.40"
+#property description "EA Pro: Auto-Calibrated Precision TP/SL (Immune to Slippage & Fast Market)"
 
 #include <Trade\Trade.mqh>
 
@@ -44,7 +44,7 @@ input bool            InpEnableAlert       = true;  // Popup Alert di layar MT5 
 input bool            InpEnablePush        = false; // Kirim Notifikasi ke HP (MetaQuotes ID)?
 
 input group "=== PENGATURAN FILTER & MAGIC NUMBER ==="
-input int             InpSlippage          = 30;    // Toleransi slippage (pts)
+input int             InpSlippage          = 50;    // Toleransi slippage (pts)
 input long            InpMagicBot          = 888100;// Magic Number Khusus Robot Zero-Level
 input long            InpMagicFilter       = 0;     // Magic Filter untuk HUD (0 = pantau semua)
 
@@ -82,7 +82,6 @@ ENUM_RISK_STATUS  g_currentStatus   = RISK_SAFE;
 double            g_tradeLot        = 0.01;
 CTrade            g_trade;
 
-// Variabel Full Auto Zero-Level Bot
 int               g_currentStep     = 1;
 double            g_currentBotLot   = 0.01;
 bool              g_isHedgeLocked   = false;
@@ -102,6 +101,7 @@ void              ExecuteReversePosition();
 void              ExecuteCloseHalf();
 void              CheckDirectionalCrossing();
 void              OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot);
+void              CalibratePositionTPSL(ulong posTicket, double exactPrice, ENUM_POSITION_TYPE posType);
 void              UpdateChartLines(double soPrice, double bePrice, bool hasExposure, bool isNotHedged);
 ENUM_ORDER_TYPE_FILLING GetOptimalFilling(string symbol);
 double            NormalizeLotSize(double lot);
@@ -130,7 +130,7 @@ int OnInit()
    DeleteRadarObjects();
    CreateRadarHUD();
 
-   Print("=== RiskRadarHUD v4.30 Clean Engine Aktif ===");
+   Print("=== RiskRadarHUD v4.40 Auto-Calibrated Precision Aktif ===");
    EventSetTimer(1);
    return(INIT_SUCCEEDED);
 }
@@ -204,21 +204,19 @@ void CheckDirectionalCrossing()
    double step = InpPriceInterval;
    if(step <= 0) step = 1.0;
 
-   // Crossing NAIK
    double targetLevelUp = MathFloor(currentBid / step) * step;
    if(g_lastPrice < targetLevelUp && currentBid >= targetLevelUp)
    {
-      Print(StringFormat("🚀 [CROSSING BUY] Harga melintas naik dari %.2f ke %.2f (Level: %.2f)!", g_lastPrice, currentBid, targetLevelUp));
+      Print(StringFormat("🚀 [CROSSING BUY] Melintas naik dari %.2f ke %.2f (Level: %.2f)!", g_lastPrice, currentBid, targetLevelUp));
       OpenZeroBotOrder(POSITION_TYPE_BUY, g_currentBotLot);
       g_lastPrice = currentBid;
       return;
    }
 
-   // Crossing TURUN
    double targetLevelDown = MathCeil(currentBid / step) * step;
    if(g_lastPrice > targetLevelDown && currentBid <= targetLevelDown)
    {
-      Print(StringFormat("🔻 [CROSSING SELL] Harga melintas turun dari %.2f ke %.2f (Level: %.2f)!", g_lastPrice, currentBid, targetLevelDown));
+      Print(StringFormat("🔻 [CROSSING SELL] Melintas turun dari %.2f ke %.2f (Level: %.2f)!", g_lastPrice, currentBid, targetLevelDown));
       OpenZeroBotOrder(POSITION_TYPE_SELL, g_currentBotLot);
       g_lastPrice = currentBid;
       return;
@@ -228,7 +226,7 @@ void CheckDirectionalCrossing()
 }
 
 //+------------------------------------------------------------------+
-//| [6] TRADE TRANSACTION - REVERSE MARTINGALE STRICT LOGGING        |
+//| [6] TRADE TRANSACTION - DUA LAYER: KALIBRASI & REVERSE           |
 //+------------------------------------------------------------------+
 void OnTradeTransaction(const MqlTradeTransaction& trans,
                         const MqlTradeRequest& request,
@@ -237,7 +235,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
    if(trans.type != TRADE_TRANSACTION_DEAL_ADD) return;
 
    ulong dealTicket = trans.deal;
-   if(dealTicket == 0 || dealTicket == g_lastManagedDeal || !HistoryDealSelect(dealTicket)) return;
+   if(dealTicket == 0 || !HistoryDealSelect(dealTicket)) return;
 
    long   dealEntry = HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
    long   dealType  = HistoryDealGetInteger(dealTicket, DEAL_TYPE);
@@ -247,9 +245,27 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 
    if(sym != _Symbol || magic != InpMagicBot) return;
 
+   // -------------------------------------------------------------
+   // LAYER 1: POSISI BARU TERISI -> KALIBRASI TP & SL PRESISI RIIL!
+   // -------------------------------------------------------------
+   if(dealEntry == DEAL_ENTRY_IN)
+   {
+      ulong posTicket   = HistoryDealGetInteger(dealTicket, DEAL_POSITION_ID);
+      double exactPrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
+      ENUM_POSITION_TYPE pType = (dealType == DEAL_TYPE_BUY) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
+
+      CalibratePositionTPSL(posTicket, exactPrice, pType);
+      return;
+   }
+
+   // -------------------------------------------------------------
+   // LAYER 2: POSISI DITUTUP -> EKSEKUSI SIKLUS REVERSE / TP
+   // -------------------------------------------------------------
    if(dealEntry == DEAL_ENTRY_OUT)
    {
+      if(dealTicket == g_lastManagedDeal) return;
       g_lastManagedDeal = dealTicket;
+
       double profit     = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
       double closePrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
 
@@ -259,7 +275,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
       else if(dealReason == DEAL_REASON_CLIENT) reasonText = "🖐️ DITUTUP MANUAL";
       else if(dealReason == DEAL_REASON_SO) reasonText = "🚨 STOP OUT BROKER";
 
-      Print(StringFormat("📋 [DEAL OUT DETECTED] Tiket: #%I64d | Harga: %.2f | Profit: $%.2f | Alasan: %s",
+      Print(StringFormat("📋 [DEAL OUT DETECTED] Tiket: #%I64d | Harga Close: %.3f | Profit: $%.2f | Alasan: %s",
             dealTicket, closePrice, profit, reasonText));
 
       ENUM_POSITION_TYPE origPosType = (dealType == DEAL_TYPE_SELL) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
@@ -314,13 +330,50 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 }
 
 //+------------------------------------------------------------------+
-//| [7] EKSEKUTOR ORDER TP/SL PRESISI DARI ENTRY RIIL                |
+//| [7] KALIBRASI SINKRONISASI TP & SL KE HARGA EKSEKUSI RIIL BROKER |
+//+------------------------------------------------------------------+
+void CalibratePositionTPSL(ulong posTicket, double exactPrice, ENUM_POSITION_TYPE posType)
+{
+   if(!PositionSelectByTicket(posTicket)) return;
+
+   double dist = InpTargetDistance;
+   if(dist <= 0) dist = 1.0;
+
+   double exactTP = 0.0;
+   double exactSL = 0.0;
+
+   if(posType == POSITION_TYPE_BUY)
+   {
+      exactTP = NormalizeDouble(exactPrice + dist, g_digits);
+      exactSL = NormalizeDouble(exactPrice - dist, g_digits);
+   }
+   else
+   {
+      exactTP = NormalizeDouble(exactPrice - dist, g_digits);
+      exactSL = NormalizeDouble(exactPrice + dist, g_digits);
+   }
+
+   double currentTP = PositionGetDouble(POSITION_TP);
+   double currentSL = PositionGetDouble(POSITION_SL);
+
+   // Cek apakah ada pergeseran akibat slippage broker
+   if(MathAbs(currentTP - exactTP) > (g_point * 0.1) || MathAbs(currentSL - exactSL) > (g_point * 0.1))
+   {
+      g_trade.SetExpertMagicNumber(InpMagicBot);
+      if(g_trade.PositionModify(posTicket, exactSL, exactTP))
+      {
+         Print(StringFormat("⚡ [AUTO-CALIBRATION SUKSES] Tiket: #%I64d | Entry Riil: %.3f | TP Disetel: %.3f (+%.3f) | SL Disetel: %.3f (-%.3f)",
+               posTicket, exactPrice, exactTP, dist, exactSL, dist));
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| [8] EKSEKUTOR ORDER                                              |
 //+------------------------------------------------------------------+
 void OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot)
 {
    lot = NormalizeLotSize(lot);
-   double tp = 0.0;
-   double sl = 0.0;
    double dist = InpTargetDistance;
    if(dist <= 0) dist = 1.0;
 
@@ -329,31 +382,29 @@ void OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot)
    if(type == POSITION_TYPE_BUY)
    {
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-      tp = NormalizeDouble(ask + dist, g_digits);
-      sl = NormalizeDouble(ask - dist, g_digits);
+      double tp  = NormalizeDouble(ask + dist, g_digits);
+      double sl  = NormalizeDouble(ask - dist, g_digits);
 
       if(g_trade.Buy(lot, _Symbol, ask, sl, tp, StringFormat("ZeroBot BUY Stp%d", g_currentStep)))
       {
-         Print(StringFormat("✅ [BUY OPEN] Lot: %.2f | Entry: %s | TP: %s (+%.2f) | SL: %s (-%.2f)",
-                            lot, DoubleToString(ask, g_digits), DoubleToString(tp, g_digits), dist, DoubleToString(sl, g_digits), dist));
+         Print(StringFormat("🚀 [BUY DIKIRIM] Lot: %.2f @ %.3f | Menunggu konfirmasi fill untuk kalibrasi...", lot, ask));
       }
    }
    else
    {
       double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      tp = NormalizeDouble(bid - dist, g_digits);
-      sl = NormalizeDouble(bid + dist, g_digits);
+      double tp  = NormalizeDouble(bid - dist, g_digits);
+      double sl  = NormalizeDouble(bid + dist, g_digits);
 
       if(g_trade.Sell(lot, _Symbol, bid, sl, tp, StringFormat("ZeroBot SELL Stp%d", g_currentStep)))
       {
-         Print(StringFormat("✅ [SELL OPEN] Lot: %.2f | Entry: %s | TP: %s (+%.2f) | SL: %s (-%.2f)",
-                            lot, DoubleToString(bid, g_digits), DoubleToString(tp, g_digits), dist, DoubleToString(sl, g_digits), dist));
+         Print(StringFormat("🚀 [SELL DIKIRIM] Lot: %.2f @ %.3f | Menunggu konfirmasi fill untuk kalibrasi...", lot, bid));
       }
    }
 }
 
 //+------------------------------------------------------------------+
-//| [8] TOOLS MANUAL HUD: HEDGE, REVERSE, BULK CLOSE                 |
+//| [9] TOOLS MANUAL HUD: HEDGE, REVERSE, BULK CLOSE                 |
 //+------------------------------------------------------------------+
 void ExecuteEmergencyHedge()
 {
@@ -548,7 +599,7 @@ void FastBulkClose(bool currentSymbolOnly)
 }
 
 //+------------------------------------------------------------------+
-//| [9] Event Handler Klik Tombol UI                                 |
+//| [10] Event Handler Klik Tombol UI                                |
 //+------------------------------------------------------------------+
 void OnChartEvent(const int id, const long& lparam, const double& dparam, const string& sparam)
 {
@@ -623,7 +674,7 @@ void OnChartEvent(const int id, const long& lparam, const double& dparam, const 
 }
 
 //+------------------------------------------------------------------+
-//| [10] Kalkulasi & Update Radar Risiko (Murni Display)              |
+//| [11] Kalkulasi & Update Radar Risiko (Display Only)              |
 //+------------------------------------------------------------------+
 void UpdateRiskRadar()
 {
@@ -670,8 +721,6 @@ void UpdateRiskRadar()
    double avgSellPrice = (sellLots > 0) ? (sellValSum / sellLots) : 0;
    double netLots      = buyLots - sellLots;
    bool   hasExposure  = (buyLots > 0 || sellLots > 0);
-
-   // CATATAN: Semua logika auto bulk-close telah dihapus total dari sini!
 
    double bePrice      = 0;
    string netBiasStr   = "NETRAL (0.00 Lot)";
@@ -842,7 +891,7 @@ void UpdateRiskRadar()
 }
 
 //+------------------------------------------------------------------+
-//| [11] Garis Visual Chart & HUD Designer                           |
+//| [12] Garis Visual Chart & HUD Designer                           |
 //+------------------------------------------------------------------+
 void UpdateChartLines(double soPrice, double bePrice, bool hasExposure, bool isNotHedged)
 {
@@ -937,8 +986,8 @@ void CreateRadarHUD()
    CreateLbl(PREFIX + "L_PL",   x + 15, curY + 32, "Simbol Floating P/L:", COLOR_TEXT_DIM, 8);
    CreateLbl(PREFIX + "V_PL",   x + w - 15, curY + 32, "$0.00 (0 pts)", COLOR_TEXT_VAL, 9, true, ANCHOR_RIGHT_UPPER);
 
-   CreateLbl(PREFIX + "L_Target",  x + 15, curY + 56, "TP Jarak: $1.00 (10 Pips)",  COLOR_SAFE,   8, true);
-   CreateLbl(PREFIX + "L_Cutloss", x + 220, curY + 56, "SL Jarak: $1.00 (10 Pips)", COLOR_DANGER, 8, true);
+   CreateLbl(PREFIX + "L_Target",  x + 15, curY + 56, "TP Auto-Calibrated: $1.00",  COLOR_SAFE,   8, true);
+   CreateLbl(PREFIX + "L_Cutloss", x + 220, curY + 56, "SL Auto-Calibrated: $1.00", COLOR_DANGER, 8, true);
 
    curY += 92;
 
