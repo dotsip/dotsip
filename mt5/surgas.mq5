@@ -2,27 +2,26 @@
 //|                                                 RiskRadarHUD.mq5 |
 //|  Radar Risiko + Fast Bulk Close + One-Click Trading              |
 //|  + Hedge 1:1 + Reverse + Auto Target (+) & Auto Cutloss (-)      |
-//|  + [PRO] ZERO-LEVEL REVERSE MARTINGALE + SAFETY HEDGE LOCK       |
+//|  + [PRO v4] 100% FULL AUTO DIRECTIONAL CROSSING REVERSE BOT      |
 //|                                      https://cindo.pages.dev     |
 //+------------------------------------------------------------------+
 #property copyright   "Mochamad Tabrani & Antigravity AI"
 #property link        "https://cindo.pages.dev"
-#property version     "3.50"
-#property description "EA Pro: Zero-Level Reverse Martingale (Max Step 6 + Safety Hedge 1:1)"
+#property version     "4.00"
+#property description "EA Pro: 100% Full Auto Directional Crossing & Reverse Martingale (Max Step 6 + Hedge Lock)"
 
 #include <Trade\Trade.mqh>
 
 //+------------------------------------------------------------------+
 //| [1] Parameter Input                                              |
 //+------------------------------------------------------------------+
-input group "=== [PRO] STRATEGI ZERO-LEVEL REVERSE MARTINGALE ==="
-input bool            InpEnableZeroBot     = true;      // 🤖 Aktifkan Robot Zero-Level Otomatis?
+input group "=== [PRO] 100% FULL AUTO ZERO-LEVEL REVERSE BOT ==="
+input bool            InpEnableZeroBot     = true;      // 🤖 Aktifkan Robot 100% Otomatis?
 input double          InpStartLot          = 0.01;      // Lot Dasar Awal (Step 1)
-input double          InpLotMultiplier     = 2.0;       // Pengali Lot saat SL (Default 2.0x)
-input int             InpMaxSteps          = 6;         // Batas Maksimal Step Pembalikan (Default: 6)
+input double          InpLotMultiplier     = 2.0;       // Faktor Pengali Martingale (2.0x)
+input int             InpMaxSteps          = 6;         // Batas Maksimal Step (Default: 6)
 input double          InpPriceInterval     = 1.0;       // Jarak Level Angka Bulat ($1.00 = 10 Pips)
 input bool            InpHedgeOnMaxStep    = true;      // 🔒 Kunci Akun (Hedge 1:1) jika Step 6 Kena SL?
-input ENUM_POSITION_TYPE InpInitialOrder   = POSITION_TYPE_BUY; // Arah Order Pertama saat Bot Start
 
 input group "=== PENGATURAN TAMPILAN PANEL (WIDESCREEN ANTI TUMPUK) ==="
 input int             InpWidth             = 430;   // Lebar Panel HUD (Pixel)
@@ -92,11 +91,12 @@ ENUM_RISK_STATUS  g_currentStatus   = RISK_SAFE;
 double            g_tradeLot        = 0.01;
 CTrade            g_trade;
 
-// Variabel Khusus Zero-Level Martingale
+// Variabel Full Auto Zero-Level Bot
 int               g_currentStep     = 1;
 double            g_currentBotLot   = 0.01;
 bool              g_isHedgeLocked   = false;
 ulong             g_lastManagedDeal = 0;
+double            g_lastPrice       = 0.0;
 
 // Forward Declarations
 void              UpdateRiskRadar();
@@ -109,8 +109,8 @@ void              ExecuteOneClickOrder(ENUM_POSITION_TYPE orderType);
 void              ExecuteEmergencyHedge();
 void              ExecuteReversePosition();
 void              ExecuteCloseHalf();
-void              OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot, double price);
-double            RoundToNearestZero(double price, double interval);
+void              CheckDirectionalCrossing();
+void              OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot, double basePrice);
 void              UpdateChartLines(double soPrice, double bePrice, bool hasExposure, bool isNotHedged, string beNote);
 ENUM_ORDER_TYPE_FILLING GetOptimalFilling(string symbol);
 double            NormalizeLotSize(double lot);
@@ -130,6 +130,7 @@ int OnInit()
    g_currentBotLot = InpStartLot;
    g_currentStep   = 1;
    g_isHedgeLocked = false;
+   g_lastPrice     = 0.0;
 
    g_trade.SetExpertMagicNumber(InpMagicBot);
    g_trade.SetDeviationInPoints(InpSlippage);
@@ -138,7 +139,7 @@ int OnInit()
    DeleteRadarObjects();
    CreateRadarHUD();
 
-   Print("=== RiskRadarHUD v3.50 Zero-Level Martingale Aktif ===");
+   Print("=== RiskRadarHUD v4.00 Directional Crossing Bot Aktif ===");
    EventSetTimer(1);
    return(INIT_SUCCEEDED);
 }
@@ -153,37 +154,13 @@ void OnDeinit(const int reason)
 
 void OnTick()
 {
-   // Jika robot aktif dan belum ada posisi yang sedang berjalan, mulai order pertama
+   // 1. Eksekutor Pemicu Awal Otomatis (Directional Crossing Level Bulat)
    if(InpEnableZeroBot && !g_isHedgeLocked && !g_isClosing)
    {
-      int botPositions = 0;
-      for(int i = PositionsTotal() - 1; i >= 0; i--)
-      {
-         ulong t = PositionGetTicket(i);
-         if(PositionSelectByTicket(t))
-         {
-            if(PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetInteger(POSITION_MAGIC) == InpMagicBot)
-               botPositions++;
-         }
-      }
-
-      if(botPositions == 0)
-      {
-         // Ambil harga saat ini dan bulatkan ke level 0 terdekat
-         double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-         double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-         double basePrice = (InpInitialOrder == POSITION_TYPE_BUY) ? ask : bid;
-         double targetZeroPrice = RoundToNearestZero(basePrice, InpPriceInterval);
-
-         // Jika harga sudah berada di area level angka bulat (toleransi spread)
-         if(MathAbs(basePrice - targetZeroPrice) <= (InpSlippage * g_point))
-         {
-            OpenZeroBotOrder(InpInitialOrder, g_currentBotLot, targetZeroPrice);
-         }
-      }
+      CheckDirectionalCrossing();
    }
 
-   // Update HUD setiap 120 ms
+   // 2. Update Tampilan HUD setiap 120 ms
    uint now = GetTickCount();
    if(now - g_lastUiTick >= 120)
    {
@@ -206,7 +183,70 @@ void OnTimer()
 }
 
 //+------------------------------------------------------------------+
-//| [5] TRADE TRANSACTION - MESIN STOP-AND-REVERSE MARTINGALE        |
+//| [5] PEMICU AWAL OTOMATIS: DIRECTIONAL CROSSING DETECTOR          |
+//+------------------------------------------------------------------+
+void CheckDirectionalCrossing()
+{
+   // Pastikan tidak ada posisi bot yang sedang berjalan
+   int botPositions = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong t = PositionGetTicket(i);
+      if(PositionSelectByTicket(t))
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetInteger(POSITION_MAGIC) == InpMagicBot)
+            botPositions++;
+      }
+   }
+
+   double currentBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+
+   // Inisialisasi harga awal pada tick pertama
+   if(g_lastPrice <= 0.0)
+   {
+      g_lastPrice = currentBid;
+      return;
+   }
+
+   // Jika sudah ada posisi yang aktif, simpan harga terakhir dan keluar
+   if(botPositions > 0)
+   {
+      g_lastPrice = currentBid;
+      return;
+   }
+
+   double step = InpPriceInterval;
+   if(step <= 0) step = 1.0;
+
+   // -------------------------------------------------------------
+   // A. DETEKSI CROSSING NAIK (DARI BAWAH MENEMBUS KE ATAS LEVEL 0)
+   // -------------------------------------------------------------
+   double targetLevelUp = MathFloor(currentBid / step) * step;
+   if(g_lastPrice < targetLevelUp && currentBid >= targetLevelUp)
+   {
+      Print(StringFormat("🚀 [DIRECTIONAL CROSS BUY] Harga melintas naik dari %.2f ke %.2f (Level: %.2f)!", g_lastPrice, currentBid, targetLevelUp));
+      OpenZeroBotOrder(POSITION_TYPE_BUY, g_currentBotLot, targetLevelUp);
+      g_lastPrice = currentBid;
+      return;
+   }
+
+   // -------------------------------------------------------------
+   // B. DETEKSI CROSSING TURUN (DARI ATAS MENEMBUS KE BAWAH LEVEL 0)
+   // -------------------------------------------------------------
+   double targetLevelDown = MathCeil(currentBid / step) * step;
+   if(g_lastPrice > targetLevelDown && currentBid <= targetLevelDown)
+   {
+      Print(StringFormat("🔻 [DIRECTIONAL CROSS SELL] Harga melintas turun dari %.2f ke %.2f (Level: %.2f)!", g_lastPrice, currentBid, targetLevelDown));
+      OpenZeroBotOrder(POSITION_TYPE_SELL, g_currentBotLot, targetLevelDown);
+      g_lastPrice = currentBid;
+      return;
+   }
+
+   g_lastPrice = currentBid;
+}
+
+//+------------------------------------------------------------------+
+//| [6] TRADE TRANSACTION - MESIN STOP-AND-REVERSE MARTINGALE        |
 //+------------------------------------------------------------------+
 void OnTradeTransaction(const MqlTradeTransaction& trans,
                         const MqlTradeRequest& request,
@@ -225,42 +265,43 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 
    if(sym != _Symbol || magic != InpMagicBot) return;
 
-   // Deteksi posisi bot yang baru saja DITUTUP (DEAL_ENTRY_OUT)
    if(dealEntry == DEAL_ENTRY_OUT)
    {
       g_lastManagedDeal = dealTicket;
       double profit     = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
       double closePrice = HistoryDealGetDouble(dealTicket, DEAL_PRICE);
 
+      // Posisi asal sebelum ditutup:
+      // Di MT5, deal penutup BUY bertipe DEAL_TYPE_SELL, dan sebaliknya.
+      ENUM_POSITION_TYPE origPosType = (dealType == DEAL_TYPE_SELL) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
+
       // -------------------------------------------------------------
-      // KASUS 1: POSISI MENANG (TAKE PROFIT / PROFIT POSITIF)
+      // KASUS 1: POSISI MENANG (TAKE PROFIT)
       // -------------------------------------------------------------
       if(dealReason == DEAL_REASON_TP || profit > 0)
       {
-         string msg = StringFormat("🎯 [STEP %d TP HIT!] Profit: $%.2f. Reset ke Step 1 & Melanjutkan Tren...", g_currentStep, profit);
+         string msg = StringFormat("🎯 [STEP %d TP HIT!] Profit: $%.2f. Reset ke Step 1 & Lanjut Tren...", g_currentStep, profit);
          Print(msg);
          if(InpEnableAlert) Alert(msg);
 
-         // Reset siklus ke Step 1
+         // Reset siklus
          g_currentStep   = 1;
          g_currentBotLot = InpStartLot;
 
          if(InpEnableZeroBot && !g_isHedgeLocked)
          {
             // Buka posisi baru SEARAH tren pada harga TP tersebut
-            ENUM_POSITION_TYPE nextType = (dealType == DEAL_TYPE_SELL) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
-            OpenZeroBotOrder(nextType, g_currentBotLot, closePrice);
+            OpenZeroBotOrder(origPosType, g_currentBotLot, closePrice);
          }
       }
       // -------------------------------------------------------------
-      // KASUS 2: POSISI KALAH (STOP LOSS / PROFIT NEGATIF)
+      // KASUS 2: POSISI KALAH (STOP LOSS)
       // -------------------------------------------------------------
       else if(dealReason == DEAL_REASON_SL || profit < 0)
       {
-         // Cek apakah sudah mencapai Step Maksimal (Step 6)
          if(g_currentStep >= InpMaxSteps)
          {
-            string msg = StringFormat("🚨 [MAKSIMAL STEP %d TERCAPAI!] Kerugian: $%.2f. Mengunci Akun HEDGE 1:1...", g_currentStep, profit);
+            string msg = StringFormat("🚨 [MAKSIMAL STEP %d TERCAPAI!] Kerugian: $%.2f. Kunci Akun HEDGE 1:1...", g_currentStep, profit);
             Print(msg);
             if(InpEnableAlert) Alert(msg);
             if(InpEnablePush)  SendNotification(msg);
@@ -273,7 +314,6 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
             return;
          }
 
-         // Naikkan Step & Lipat Lot
          g_currentStep++;
          g_currentBotLot = NormalizeLotSize(g_currentBotLot * InpLotMultiplier);
 
@@ -284,7 +324,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          if(InpEnableZeroBot && !g_isHedgeLocked)
          {
             // Buka posisi baru BERLAWANAN ARAH (Stop-and-Reverse)
-            ENUM_POSITION_TYPE reverseType = (dealType == DEAL_TYPE_BUY) ? POSITION_TYPE_BUY : POSITION_TYPE_SELL;
+            ENUM_POSITION_TYPE reverseType = (origPosType == POSITION_TYPE_BUY) ? POSITION_TYPE_SELL : POSITION_TYPE_BUY;
             OpenZeroBotOrder(reverseType, g_currentBotLot, closePrice);
          }
       }
@@ -292,7 +332,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 }
 
 //+------------------------------------------------------------------+
-//| [6] EKSEKUTOR ORDER ZERO-LEVEL DENGAN TP/SL HARGA BULAT          |
+//| [7] EKSEKUTOR ORDER ZERO-LEVEL DENGAN TP/SL HARGA BULAT          |
 //+------------------------------------------------------------------+
 void OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot, double basePrice)
 {
@@ -300,7 +340,6 @@ void OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot, double basePrice)
    double tp = 0.0;
    double sl = 0.0;
 
-   // Hitung TP dan SL tepat berjarak InpPriceInterval ($1.00)
    if(type == POSITION_TYPE_BUY)
    {
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
@@ -319,14 +358,8 @@ void OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot, double basePrice)
    }
 }
 
-double RoundToNearestZero(double price, double interval)
-{
-   if(interval <= 0) interval = 1.0;
-   return NormalizeDouble(MathRound(price / interval) * interval, g_digits);
-}
-
 //+------------------------------------------------------------------+
-//| [7] FITUR PENGAMAN & TOOLS LANJUTAN: HEDGE, REVERSE, BULK CLOSE   |
+//| [8] FITUR PENGAMAN & TOOLS LANJUTAN: HEDGE, REVERSE, BULK CLOSE   |
 //+------------------------------------------------------------------+
 void ExecuteEmergencyHedge()
 {
@@ -356,18 +389,18 @@ void ExecuteEmergencyHedge()
    double hedgeLot = NormalizeLotSize(MathAbs(netLots));
    if(hedgeLot <= 0) return;
 
-   g_trade.SetExpertMagicNumber(0); // Buka order manual penyelamatan
+   g_trade.SetExpertMagicNumber(0);
    if(netLots > 0)
    {
       double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
       if(g_trade.Sell(hedgeLot, _Symbol, bid, 0, 0, "EMERGENCY HEDGE 1:1"))
-         Alert("🔒 EMERGENCY HEDGE BERHASIL: Membuka SELL " + DoubleToString(hedgeLot, 2) + " Lot. Akun Terkunci Aman!");
+         Alert("🔒 EMERGENCY HEDGE: Membuka SELL " + DoubleToString(hedgeLot, 2) + " Lot. Akun Terkunci Aman!");
    }
    else
    {
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       if(g_trade.Buy(hedgeLot, _Symbol, ask, 0, 0, "EMERGENCY HEDGE 1:1"))
-         Alert("🔒 EMERGENCY HEDGE BERHASIL: Membuka BUY " + DoubleToString(hedgeLot, 2) + " Lot. Akun Terkunci Aman!");
+         Alert("🔒 EMERGENCY HEDGE: Membuka BUY " + DoubleToString(hedgeLot, 2) + " Lot. Akun Terkunci Aman!");
    }
 }
 
@@ -521,7 +554,7 @@ void FastBulkClose(bool currentSymbolOnly)
 }
 
 //+------------------------------------------------------------------+
-//| [8] Event Handler Klik Tombol UI                                 |
+//| [9] Event Handler Klik Tombol UI                                 |
 //+------------------------------------------------------------------+
 void OnChartEvent(const int id, const long& lparam, const double& dparam, const string& sparam)
 {
@@ -596,7 +629,7 @@ void OnChartEvent(const int id, const long& lparam, const double& dparam, const 
 }
 
 //+------------------------------------------------------------------+
-//| [9] Kalkulasi & Update Radar Risiko + Zona Impas Keranjang       |
+//| [10] Kalkulasi & Update Radar Risiko + Zona Impas Keranjang      |
 //+------------------------------------------------------------------+
 void UpdateRiskRadar()
 {
@@ -631,6 +664,15 @@ void UpdateRiskRadar()
       }
    }
 
+   // Auto Reset status Hedge jika posisi akun sudah dibersihkan/ditutup oleh operator
+   if(posCountCurr == 0 && g_isHedgeLocked)
+   {
+      g_isHedgeLocked = false;
+      g_currentStep   = 1;
+      g_currentBotLot = InpStartLot;
+      Print("🔄 SIKLUS DI-RESET: Operator telah menutup posisi. Robot kembali standby mencari crossing!");
+   }
+
    double avgBuyPrice  = (buyLots  > 0) ? (buyValSum  / buyLots)  : 0;
    double avgSellPrice = (sellLots > 0) ? (sellValSum / sellLots) : 0;
    double netLots      = buyLots - sellLots;
@@ -639,7 +681,7 @@ void UpdateRiskRadar()
    // Target Keranjang
    if(InpBasketTargetMoney > 0 && symbolPL >= InpBasketTargetMoney && !g_isClosing && posCountCurr > 0)
    {
-      Print(StringFormat("🎯 AUTO TARGET POSITIF TERCAPAI ($%.2f)! Bulk Close...", symbolPL));
+      Print(StringFormat("🎯 TARGET PROFIT KERANJANG TERCAPAI ($%.2f)! Bulk Close...", symbolPL));
       FastBulkClose(true);
       return;
    }
@@ -647,7 +689,7 @@ void UpdateRiskRadar()
    double maxLossLimit = -MathAbs(InpBasketMaxLossMoney);
    if(InpBasketMaxLossMoney > 0 && symbolPL <= maxLossLimit && !g_isClosing && posCountCurr > 0)
    {
-      Print(StringFormat("🛑 AUTO CUTLOSS TERSENTUH ($%.2f)! Cutloss Darurat...", symbolPL));
+      Print(StringFormat("🛑 MAX LOSS TERSENTUH ($%.2f)! Cutloss Darurat...", symbolPL));
       FastBulkClose(true);
       return;
    }
@@ -666,7 +708,7 @@ void UpdateRiskRadar()
    {
       if(MathAbs(netLots) > 0.00001)
       {
-         if(netLots > 0) // Net BUY
+         if(netLots > 0)
          {
             bePrice    = (buyValSum - sellValSum) / netLots;
             netBiasStr = StringFormat("+%.2f Lot BUY (Net Long)", netLots);
@@ -686,7 +728,7 @@ void UpdateRiskRadar()
                distZoneClr = COLOR_WARN;
             }
          }
-         else // Net SELL
+         else
          {
             bePrice    = (sellValSum - buyValSum) / MathAbs(netLots);
             netBiasStr = StringFormat("%.2f Lot SELL (Net Short)", netLots);
@@ -793,6 +835,8 @@ void UpdateRiskRadar()
       zeroBotBanner = "🤖 ZERO-BOT: NONAKTIF (MANUAL)";
    else if(g_isHedgeLocked)
       zeroBotBanner = "🔒 ZERO-BOT: HEDGE LOCKED (STEP 6 HIT)";
+   else if(posCountCurr == 0)
+      zeroBotBanner = "🤖 ZERO-BOT: STANDBY MENUNGGU CROSSING";
    else
       zeroBotBanner = StringFormat("🤖 ZERO-BOT: STEP %d/%d (Lot: %.2f)", g_currentStep, InpMaxSteps, g_currentBotLot);
 
@@ -839,7 +883,7 @@ void UpdateRiskRadar()
 }
 
 //+------------------------------------------------------------------+
-//| [10] Garis Visual Chart & HUD Designer                           |
+//| [11] Garis Visual Chart & HUD Designer                           |
 //+------------------------------------------------------------------+
 void UpdateChartLines(double soPrice, double bePrice, bool hasExposure, bool isNotHedged, string beNote)
 {
@@ -906,7 +950,7 @@ void CreateRadarHUD()
 
    // STATUS ZERO-BOT BANNER
    CreateBox(PREFIX + "SubHead", x + 5, curY, w - 10, 20, C'20,25,32', COLOR_BORDER);
-   CreateLbl(PREFIX + "L_ZeroInfo", x + 15, curY + 4, "🤖 ZERO-BOT: STEP 1/6 (Lot: 0.01)", COLOR_ACCENT, 8, true);
+   CreateLbl(PREFIX + "L_ZeroInfo", x + 15, curY + 4, "🤖 ZERO-BOT: STANDBY MENUNGGU CROSSING", COLOR_ACCENT, 8, true);
 
    curY += 25;
 
