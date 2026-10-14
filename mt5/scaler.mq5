@@ -2,14 +2,14 @@
 //|                                                   JaringEmas.mq5 |
 //|  100% Dual-Direction: Split Fresh & Recovery Martingale          |
 //|  Candle Close Engine + Dynamic Candle Range Overlay + Watchdog   |
-//|  Auto-Lot Scaler ($1000 = 0.01) + Smart Margin Guard v14.10     |
-//|  Complete Audio & Popup Order Execution Alerts                   |
+//|  Auto-Lot Scaler ($1000 = 0.01) + Smart Margin Guard             |
+//|  Multi-Tone Distinct Audio Alert Engine v14.20                   |
 //|                                      https://cindo.pages.dev     |
 //+------------------------------------------------------------------+
 #property copyright   "Mochamad Tabrani & Antigravity AI"
 #property link        "https://cindo.pages.dev"
-#property version     "14.10"
-#property description "Dual-Direction Martingale with Audio-Visual Order Execution Alerts"
+#property version     "14.20"
+#property description "Dual-Direction Martingale with Distinct Multi-Tone Audio Alerts for Orders, TP & SL"
 
 #include <Trade\Trade.mqh>
 
@@ -56,8 +56,16 @@ input bool                  InpAvoidRollover      = false;             // 🛑 H
 input double                InpDailyProfitTarget  = 0.0;               // 🎯 Target Profit Harian ($) (0 = Nonaktif)
 input double                InpDailyMaxLoss       = 0.0;               // 🛑 Batas Rugi Harian ($) (0 = Nonaktif)
 
-input group "=== [5] NOTIFIKASI & BROKER ==="
-input bool                  InpEnableAlert        = true;              // 🔔 Popup Alert Order, TP & SL di Layar MT5?
+input group "=== [5] PENGATURAN SUARA ALERT (DISTINCT AUDIO) ==="
+input bool                  InpEnableSound        = true;              // 🔊 Aktifkan Suara Berbeda Tiap Aksi?
+input string                InpSoundOrder         = "ok.wav";          // ⚡ Suara Order Baru Dibuka (Ting)
+input string                InpSoundTP            = "expert.wav";      // 🎯 Suara Take Profit (Melodi Menang)
+input string                InpSoundRecovery      = "news.wav";        // 🎉 Suara Recovery Tuntas (Fanfare)
+input string                InpSoundSL            = "stops.wav";       // 🛑 Suara Kena Stop Loss
+input string                InpSoundWarning       = "timeout.wav";     // ⚠️ Suara Peringatan / Limit Margin
+
+input group "=== [6] NOTIFIKASI POPUP & BROKER ==="
+input bool                  InpEnablePopupAlert   = false;             // 🪟 Pop-up Alert Dialog MT5? (false = Biarkan Suara Unik Berbunyi Bersih)
 input bool                  InpEnablePush         = false;             // 📱 Notifikasi ke HP (MetaQuotes ID)?
 input int                   InpSlippage           = 50;                // Toleransi Slippage (pts)
 input long                  InpMagicBot           = 888100;            // Magic Number Khusus Bot Ini
@@ -90,6 +98,28 @@ const string      PREFIX_CRANGE     = "CRANGE_";
 bool              g_isCircuitBreakerTripped = false;
 ulong             g_lastManagedDeal        = 0;
 CTrade            g_trade;
+
+//+------------------------------------------------------------------+
+//| [HELPER]: Audio Alert Player Terpisah Sesuai Aksi                |
+//+------------------------------------------------------------------+
+void TriggerSoundAlert(string soundFile, string message = "")
+{
+   if(InpEnableSound && soundFile != "")
+   {
+      PlaySound(soundFile);
+   }
+
+   if(message != "")
+   {
+      Print(message);
+
+      if(InpEnablePopupAlert)
+         Alert(message);
+
+      if(InpEnablePush)
+         SendNotification(message);
+   }
+}
 
 //+------------------------------------------------------------------+
 //| [3] Lifecycle Inisialisasi                                       |
@@ -131,7 +161,7 @@ int OnInit()
    // Gambar teks range candle saat EA pertama kali dipasang
    DrawCandleRangeLabels();
 
-   Print("=== JaringEmas v14.10 (Order Execution Audio-Alerts) Aktif ===");
+   Print("=== JaringEmas v14.20 (Distinct Multi-Tone Audio Engine) Aktif ===");
    UpdateChartComment();
    return(INIT_SUCCEEDED);
 }
@@ -404,9 +434,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                   int nextStep   = g_buyStep + 1;
                   double nextLot = NormalizeLotSize(g_buyLot * InpLotMultiplier);
 
-                  PrintFormat("🚀 [BUY FRESH TP HIT!] Profit: $%.2f. Marti Profit ke BUY FRESH Step %d (Lot: %.2f)!",
-                              profit, nextStep, nextLot);
-                  if(InpEnableAlert) Alert(StringFormat("🎯 [TP HIT] BUY Fresh Menang (+$%.2f)! Lanjut Marti Profit Lot: %.2f", profit, nextLot));
+                  TriggerSoundAlert(InpSoundTP, StringFormat("🎯 [TP HIT] BUY Fresh Menang (+$%.2f)! Lanjut Marti Profit Lot: %.2f", profit, nextLot));
 
                   if(InpEnableBot && !g_isBuyLocked)
                   {
@@ -421,9 +449,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                else
                {
                   double freshLot = GetFreshStartLot();
-                  PrintFormat("👑 [BUY MAX FRESH %d HIT!] Profit: $%.2f. Panen Profit! Reset ke Fresh Step 1 (Lot: %.2f)",
-                              InpMaxFreshSteps, profit, freshLot);
-                  if(InpEnableAlert) Alert(StringFormat("👑 [PANEN PROFIT] BUY Max Fresh Selesai (+$%.2f)! Reset ke Lot %.2f", profit, freshLot));
+                  TriggerSoundAlert(InpSoundTP, StringFormat("👑 [PANEN PROFIT] BUY Max Fresh Selesai (+$%.2f)! Reset ke Lot %.2f", profit, freshLot));
 
                   g_buyStep   = 1;
                   g_buyLot    = freshLot;
@@ -436,9 +462,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
             else // g_buyStatus == STATUS_RECOVERY
             {
                double freshLot = GetFreshStartLot();
-               PrintFormat("🎉 [BUY RECOVERY TP HIT!] Recovery Tuntas! Profit: $%.2f. Reset ke Fresh Lot: %.2f",
-                           profit, freshLot);
-               if(InpEnableAlert) Alert(StringFormat("🎉 [RECOVERY TUNTAS!] BUY Recovery Menang (+$%.2f)! Reset ke Lot Fresh: %.2f", profit, freshLot));
+               TriggerSoundAlert(InpSoundRecovery, StringFormat("🎉 [RECOVERY TUNTAS!] BUY Recovery Menang (+$%.2f)! Reset ke Lot Fresh: %.2f", profit, freshLot));
 
                g_buyStatus = STATUS_FRESH;
                g_buyStep   = 1;
@@ -456,8 +480,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                // FRESH (misal 0.01) SL -> Mulai RECOVERY LEVEL 1 (Lot 0.02)
                double nextLot = NormalizeLotSize(g_buyLot * InpLotMultiplier);
 
-               PrintFormat("🛑 [BUY FRESH SL] Mulai RECOVERY Level 1 (Lot: %.2f) & Buka SELL %.2f FRESH", nextLot, nextLot);
-               if(InpEnableAlert) Alert(StringFormat("🛑 [SL HIT] BUY Kena SL! Buka BUY %.2f RECOV Lvl 1 & SELL %.2f FRESH", nextLot, nextLot));
+               TriggerSoundAlert(InpSoundSL, StringFormat("🛑 [SL HIT] BUY Kena SL! Buka BUY %.2f RECOV Lvl 1 & SELL %.2f FRESH", nextLot, nextLot));
 
                if(InpEnableBot && !g_isBuyLocked)
                {
@@ -491,7 +514,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                int nextStep   = g_buyStep + 1;
                double nextLot = NormalizeLotSize(g_buyLot * InpLotMultiplier);
 
-               PrintFormat("🛑 [BUY RECOVERY SL] Melanjutkan ke BUY RECOVERY Level %d (Lot: %.2f)...", nextStep, nextLot);
+               TriggerSoundAlert(InpSoundSL, StringFormat("🛑 [RECOVERY SL] BUY Lanjut ke RECOVERY Level %d (Lot: %.2f)...", nextStep, nextLot));
                if(InpEnableBot && !g_isBuyLocked)
                {
                   if(OpenZeroBotOrder(POSITION_TYPE_BUY, nextLot, nextStep, STATUS_RECOVERY))
@@ -501,8 +524,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                   }
                   else
                   {
-                     PrintFormat("🚨 [GAGAL ORDER] Gagal membuka BUY RECOVERY Level %d (Lot: %.2f)! Cek Free Margin akun.", nextStep, nextLot);
-                     if(InpEnableAlert) Alert(StringFormat("Gagal Order BUY RECOVERY Level %d (Lot: %.2f)! Periksa Saldo.", nextStep, nextLot));
+                     TriggerSoundAlert(InpSoundWarning, StringFormat("🚨 [GAGAL ORDER] Gagal membuka BUY RECOVERY Level %d (Lot: %.2f)! Cek Free Margin.", nextStep, nextLot));
                   }
                }
             }
@@ -524,9 +546,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                   int nextStep   = g_sellStep + 1;
                   double nextLot = NormalizeLotSize(g_sellLot * InpLotMultiplier);
 
-                  PrintFormat("🚀 [SELL FRESH TP HIT!] Profit: $%.2f. Marti Profit ke SELL FRESH Step %d (Lot: %.2f)!",
-                              profit, nextStep, nextLot);
-                  if(InpEnableAlert) Alert(StringFormat("🎯 [TP HIT] SELL Fresh Menang (+$%.2f)! Lanjut Marti Profit Lot: %.2f", profit, nextLot));
+                  TriggerSoundAlert(InpSoundTP, StringFormat("🎯 [TP HIT] SELL Fresh Menang (+$%.2f)! Lanjut Marti Profit Lot: %.2f", profit, nextLot));
 
                   if(InpEnableBot && !g_isSellLocked)
                   {
@@ -541,9 +561,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                else
                {
                   double freshLot = GetFreshStartLot();
-                  PrintFormat("👑 [SELL MAX FRESH %d HIT!] Profit: $%.2f. Panen Profit! Reset ke Fresh Step 1 (Lot: %.2f)",
-                              InpMaxFreshSteps, profit, freshLot);
-                  if(InpEnableAlert) Alert(StringFormat("👑 [PANEN PROFIT] SELL Max Fresh Selesai (+$%.2f)! Reset ke Lot %.2f", profit, freshLot));
+                  TriggerSoundAlert(InpSoundTP, StringFormat("👑 [PANEN PROFIT] SELL Max Fresh Selesai (+$%.2f)! Reset ke Lot %.2f", profit, freshLot));
 
                   g_sellStep   = 1;
                   g_sellLot    = freshLot;
@@ -556,9 +574,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
             else // g_sellStatus == STATUS_RECOVERY
             {
                double freshLot = GetFreshStartLot();
-               PrintFormat("🎉 [SELL RECOVERY TP HIT!] Recovery Tuntas! Profit: $%.2f. Reset ke Fresh Lot: %.2f",
-                           profit, freshLot);
-               if(InpEnableAlert) Alert(StringFormat("🎉 [RECOVERY TUNTAS!] SELL Recovery Menang (+$%.2f)! Reset ke Lot Fresh: %.2f", profit, freshLot));
+               TriggerSoundAlert(InpSoundRecovery, StringFormat("🎉 [RECOVERY TUNTAS!] SELL Recovery Menang (+$%.2f)! Reset ke Lot Fresh: %.2f", profit, freshLot));
 
                g_sellStatus = STATUS_FRESH;
                g_sellStep   = 1;
@@ -576,8 +592,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                // FRESH (misal 0.01) SL -> Mulai RECOVERY LEVEL 1 (Lot 0.02)
                double nextLot = NormalizeLotSize(g_sellLot * InpLotMultiplier);
 
-               PrintFormat("🛑 [SELL FRESH SL] Mulai RECOVERY Level 1 (Lot: %.2f) & Buka BUY %.2f FRESH", nextLot, nextLot);
-               if(InpEnableAlert) Alert(StringFormat("🛑 [SL HIT] SELL Kena SL! Buka SELL %.2f RECOV Lvl 1 & BUY %.2f FRESH", nextLot, nextLot));
+               TriggerSoundAlert(InpSoundSL, StringFormat("🛑 [SL HIT] SELL Kena SL! Buka SELL %.2f RECOV Lvl 1 & BUY %.2f FRESH", nextLot, nextLot));
 
                if(InpEnableBot && !g_isSellLocked)
                {
@@ -611,7 +626,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                int nextStep   = g_sellStep + 1;
                double nextLot = NormalizeLotSize(g_sellLot * InpLotMultiplier);
 
-               PrintFormat("🛑 [SELL RECOVERY SL] Melanjutkan ke SELL RECOVERY Level %d (Lot: %.2f)...", nextStep, nextLot);
+               TriggerSoundAlert(InpSoundSL, StringFormat("🛑 [RECOVERY SL] SELL Lanjut ke RECOVERY Level %d (Lot: %.2f)...", nextStep, nextLot));
                if(InpEnableBot && !g_isSellLocked)
                {
                   if(OpenZeroBotOrder(POSITION_TYPE_SELL, nextLot, nextStep, STATUS_RECOVERY))
@@ -621,8 +636,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                   }
                   else
                   {
-                     PrintFormat("🚨 [GAGAL ORDER] Gagal membuka SELL RECOVERY Level %d (Lot: %.2f)! Cek Free Margin akun.", nextStep, nextLot);
-                     if(InpEnableAlert) Alert(StringFormat("Gagal Order SELL RECOVERY Level %d (Lot: %.2f)! Periksa Saldo.", nextStep, nextLot));
+                     TriggerSoundAlert(InpSoundWarning, StringFormat("🚨 [GAGAL ORDER] Gagal membuka SELL RECOVERY Level %d (Lot: %.2f)! Cek Free Margin.", nextStep, nextLot));
                   }
                }
             }
@@ -636,9 +650,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 //+------------------------------------------------------------------+
 void HandleMaxStepReached(string side)
 {
-   PrintFormat("🚨 [%s MAX RECOVERY LEVEL TERCAPAI!] Mengaktifkan Protokol Proteksi...", side);
-   if(InpEnableAlert) Alert(StringFormat("%s Max Recovery Level %d Tercapai!", side, InpMaxRecoverySteps));
-   if(InpEnablePush)  SendNotification(StringFormat("%s Max Recovery Level %d Tercapai!", side, InpMaxRecoverySteps));
+   TriggerSoundAlert(InpSoundWarning, StringFormat("🚨 [%s MAX RECOVERY LEVEL TERCAPAI!] Mengaktifkan Protokol Proteksi...", side));
 
    if(side == "BUY")  g_isBuyLocked  = true;
    if(side == "SELL") g_isSellLocked = true;
@@ -704,8 +716,7 @@ bool OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot, int step, ENUM_POS_ST
       {
          string msg = StringFormat("⛔ [MARGIN KURANG!] %s Level %d (Lot: %.2f) butuh margin $%.2f, Free Margin sisa $%.2f!",
                                    (type == POSITION_TYPE_BUY ? "BUY" : "SELL"), step, lot, reqMargin, freeMargin);
-         Print(msg);
-         if(InpEnableAlert) Alert(msg);
+         TriggerSoundAlert(InpSoundWarning, msg);
          return false;
       }
    }
@@ -760,19 +771,10 @@ bool OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot, int step, ENUM_POS_ST
    if(success)
    {
       string sideStr = (type == POSITION_TYPE_BUY ? "BUY" : "SELL");
-      PrintFormat("✅ Order %s %s Level %d (Lot: %.2f) BERHASIL DIBUKA!", sideStr, statusStr, step, lot);
-
-      // 🔔 [POPUP ALERT & NOTIFIKASI ORDER BARU]
-      if(InpEnableAlert)
-      {
-         Alert(StringFormat("⚡ [ORDER BUKA] %s %s %s Lvl %d | Lot: %.2f | TP/SL: $%.2f",
-                            _Symbol, sideStr, statusStr, step, lot, InpTargetDistance));
-      }
-      if(InpEnablePush)
-      {
-         SendNotification(StringFormat("⚡ [ORDER BUKA] %s %s %s Lvl %d | Lot: %.2f",
-                                       _Symbol, sideStr, statusStr, step, lot));
-      }
+      
+      // ⚡ BUNYIKAN SUARA KHUSUS ORDER BARU DIBUKA (ok.wav / Ting)
+      TriggerSoundAlert(InpSoundOrder, StringFormat("⚡ [ORDER BUKA] %s %s %s Lvl %d | Lot: %.2f | TP/SL: $%.2f",
+                                                   _Symbol, sideStr, statusStr, step, lot, InpTargetDistance));
 
       EnforcePositionTPSL();
    }
@@ -784,9 +786,9 @@ bool OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot, int step, ENUM_POS_ST
                   (type == POSITION_TYPE_BUY ? "BUY" : "SELL"), statusStr, step, lot, retCode, retDesc);
 
       if(retCode == 10019)
-         Alert(StringFormat("❌ [NO MONEY] Saldo/Margin tidak cukup untuk membuka Level %d (Lot: %.2f)!", step, lot));
+         TriggerSoundAlert(InpSoundWarning, StringFormat("❌ [NO MONEY] Saldo/Margin tidak cukup untuk membuka Level %d (Lot: %.2f)!", step, lot));
       else if(retCode == 10014 || retCode == 10043)
-         Alert(StringFormat("❌ [LIMIT LOT] Lot %.2f melampaui batas maksimal broker!", lot));
+         TriggerSoundAlert(InpSoundWarning, StringFormat("❌ [LIMIT LOT] Lot %.2f melampaui batas maksimal broker!", lot));
    }
    return success;
 }
@@ -890,8 +892,7 @@ bool CheckDailyCircuitBreaker()
       {
          g_isCircuitBreakerTripped = true;
          string msg = StringFormat("🎉 [CIRCUIT BREAKER] Target Harian $%.2f Tercapai! Profit: $%.2f.", InpDailyProfitTarget, todayPnl);
-         Print(msg);
-         if(InpEnableAlert) Alert(msg);
+         TriggerSoundAlert(InpSoundTP, msg);
       }
       return false;
    }
@@ -902,8 +903,7 @@ bool CheckDailyCircuitBreaker()
       {
          g_isCircuitBreakerTripped = true;
          string msg = StringFormat("🛑 [CIRCUIT BREAKER] Batas Rugi Harian -$%.2f Terlewati! Loss: $%.2f.", InpDailyMaxLoss, todayPnl);
-         Print(msg);
-         if(InpEnableAlert) Alert(msg);
+         TriggerSoundAlert(InpSoundWarning, msg);
       }
       return false;
    }
@@ -986,7 +986,7 @@ void UpdateChartComment()
 
    Comment(StringFormat(
       "===========================================================\n"
-      " 🛡️ JARING EMAS v14.10 - AUTO-LOT BALANCE SCALER\n"
+      " 🛡️ JARING EMAS v14.20 - DISTINCT AUDIO ENGINE\n"
       "===========================================================\n"
       " Simbol        : %s | Timeframe: %s\n"
       " Saldo Akun    : $%.2f | Free Margin: $%.2f\n"
