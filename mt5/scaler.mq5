@@ -2,13 +2,14 @@
 //|                                                   JaringEmas.mq5 |
 //|  100% Dual-Direction: Split Fresh & Recovery Martingale          |
 //|  Candle Close Engine + Dynamic Candle Range Overlay + Watchdog   |
-//|  Auto-Lot Scaler ($1000 = 0.01) + Smart Margin Guard v14.00     |
+//|  Auto-Lot Scaler ($1000 = 0.01) + Smart Margin Guard v14.10     |
+//|  Complete Audio & Popup Order Execution Alerts                   |
 //|                                      https://cindo.pages.dev     |
 //+------------------------------------------------------------------+
 #property copyright   "Mochamad Tabrani & Antigravity AI"
 #property link        "https://cindo.pages.dev"
-#property version     "14.00"
-#property description "Dual-Direction Martingale with Dynamic Balance Auto-Lot Scaler & Margin Guard"
+#property version     "14.10"
+#property description "Dual-Direction Martingale with Audio-Visual Order Execution Alerts"
 
 #include <Trade\Trade.mqh>
 
@@ -56,8 +57,8 @@ input double                InpDailyProfitTarget  = 0.0;               // 🎯 T
 input double                InpDailyMaxLoss       = 0.0;               // 🛑 Batas Rugi Harian ($) (0 = Nonaktif)
 
 input group "=== [5] NOTIFIKASI & BROKER ==="
-input bool                  InpEnableAlert        = true;              // Popup Alert di Layar MT5?
-input bool                  InpEnablePush         = false;             // Notifikasi ke HP (MetaQuotes ID)?
+input bool                  InpEnableAlert        = true;              // 🔔 Popup Alert Order, TP & SL di Layar MT5?
+input bool                  InpEnablePush         = false;             // 📱 Notifikasi ke HP (MetaQuotes ID)?
 input int                   InpSlippage           = 50;                // Toleransi Slippage (pts)
 input long                  InpMagicBot           = 888100;            // Magic Number Khusus Bot Ini
 
@@ -130,7 +131,7 @@ int OnInit()
    // Gambar teks range candle saat EA pertama kali dipasang
    DrawCandleRangeLabels();
 
-   Print("=== JaringEmas v14.00 (Auto-Lot Scaler & Robust Marti) Aktif ===");
+   Print("=== JaringEmas v14.10 (Order Execution Audio-Alerts) Aktif ===");
    UpdateChartComment();
    return(INIT_SUCCEEDED);
 }
@@ -405,7 +406,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 
                   PrintFormat("🚀 [BUY FRESH TP HIT!] Profit: $%.2f. Marti Profit ke BUY FRESH Step %d (Lot: %.2f)!",
                               profit, nextStep, nextLot);
-                  if(InpEnableAlert) Alert(StringFormat("BUY Fresh TP! Lanjut Marti Profit Lot: %.2f", nextLot));
+                  if(InpEnableAlert) Alert(StringFormat("🎯 [TP HIT] BUY Fresh Menang (+$%.2f)! Lanjut Marti Profit Lot: %.2f", profit, nextLot));
 
                   if(InpEnableBot && !g_isBuyLocked)
                   {
@@ -422,6 +423,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                   double freshLot = GetFreshStartLot();
                   PrintFormat("👑 [BUY MAX FRESH %d HIT!] Profit: $%.2f. Panen Profit! Reset ke Fresh Step 1 (Lot: %.2f)",
                               InpMaxFreshSteps, profit, freshLot);
+                  if(InpEnableAlert) Alert(StringFormat("👑 [PANEN PROFIT] BUY Max Fresh Selesai (+$%.2f)! Reset ke Lot %.2f", profit, freshLot));
 
                   g_buyStep   = 1;
                   g_buyLot    = freshLot;
@@ -436,7 +438,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                double freshLot = GetFreshStartLot();
                PrintFormat("🎉 [BUY RECOVERY TP HIT!] Recovery Tuntas! Profit: $%.2f. Reset ke Fresh Lot: %.2f",
                            profit, freshLot);
-               if(InpEnableAlert) Alert(StringFormat("BUY Recovery Tuntas! Reset ke Fresh Lot: %.2f", freshLot));
+               if(InpEnableAlert) Alert(StringFormat("🎉 [RECOVERY TUNTAS!] BUY Recovery Menang (+$%.2f)! Reset ke Lot Fresh: %.2f", profit, freshLot));
 
                g_buyStatus = STATUS_FRESH;
                g_buyStep   = 1;
@@ -455,7 +457,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                double nextLot = NormalizeLotSize(g_buyLot * InpLotMultiplier);
 
                PrintFormat("🛑 [BUY FRESH SL] Mulai RECOVERY Level 1 (Lot: %.2f) & Buka SELL %.2f FRESH", nextLot, nextLot);
-               if(InpEnableAlert) Alert(StringFormat("BUY SL! Buka BUY %.2f RECOV Lvl 1 & SELL %.2f FRESH", nextLot, nextLot));
+               if(InpEnableAlert) Alert(StringFormat("🛑 [SL HIT] BUY Kena SL! Buka BUY %.2f RECOV Lvl 1 & SELL %.2f FRESH", nextLot, nextLot));
 
                if(InpEnableBot && !g_isBuyLocked)
                {
@@ -524,7 +526,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 
                   PrintFormat("🚀 [SELL FRESH TP HIT!] Profit: $%.2f. Marti Profit ke SELL FRESH Step %d (Lot: %.2f)!",
                               profit, nextStep, nextLot);
-                  if(InpEnableAlert) Alert(StringFormat("SELL Fresh TP! Lanjut Marti Profit Lot: %.2f", nextLot));
+                  if(InpEnableAlert) Alert(StringFormat("🎯 [TP HIT] SELL Fresh Menang (+$%.2f)! Lanjut Marti Profit Lot: %.2f", profit, nextLot));
 
                   if(InpEnableBot && !g_isSellLocked)
                   {
@@ -541,6 +543,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                   double freshLot = GetFreshStartLot();
                   PrintFormat("👑 [SELL MAX FRESH %d HIT!] Profit: $%.2f. Panen Profit! Reset ke Fresh Step 1 (Lot: %.2f)",
                               InpMaxFreshSteps, profit, freshLot);
+                  if(InpEnableAlert) Alert(StringFormat("👑 [PANEN PROFIT] SELL Max Fresh Selesai (+$%.2f)! Reset ke Lot %.2f", profit, freshLot));
 
                   g_sellStep   = 1;
                   g_sellLot    = freshLot;
@@ -555,7 +558,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                double freshLot = GetFreshStartLot();
                PrintFormat("🎉 [SELL RECOVERY TP HIT!] Recovery Tuntas! Profit: $%.2f. Reset ke Fresh Lot: %.2f",
                            profit, freshLot);
-               if(InpEnableAlert) Alert(StringFormat("SELL Recovery Tuntas! Reset ke Fresh Lot: %.2f", freshLot));
+               if(InpEnableAlert) Alert(StringFormat("🎉 [RECOVERY TUNTAS!] SELL Recovery Menang (+$%.2f)! Reset ke Lot Fresh: %.2f", profit, freshLot));
 
                g_sellStatus = STATUS_FRESH;
                g_sellStep   = 1;
@@ -574,7 +577,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                double nextLot = NormalizeLotSize(g_sellLot * InpLotMultiplier);
 
                PrintFormat("🛑 [SELL FRESH SL] Mulai RECOVERY Level 1 (Lot: %.2f) & Buka BUY %.2f FRESH", nextLot, nextLot);
-               if(InpEnableAlert) Alert(StringFormat("SELL SL! Buka SELL %.2f RECOV Lvl 1 & BUY %.2f FRESH", nextLot, nextLot));
+               if(InpEnableAlert) Alert(StringFormat("🛑 [SL HIT] SELL Kena SL! Buka SELL %.2f RECOV Lvl 1 & BUY %.2f FRESH", nextLot, nextLot));
 
                if(InpEnableBot && !g_isSellLocked)
                {
@@ -756,8 +759,21 @@ bool OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot, int step, ENUM_POS_ST
 
    if(success)
    {
-      PrintFormat("✅ Order %s %s Level %d (Lot: %.2f) BERHASIL DIBUKA!",
-                  (type == POSITION_TYPE_BUY ? "BUY" : "SELL"), statusStr, step, lot);
+      string sideStr = (type == POSITION_TYPE_BUY ? "BUY" : "SELL");
+      PrintFormat("✅ Order %s %s Level %d (Lot: %.2f) BERHASIL DIBUKA!", sideStr, statusStr, step, lot);
+
+      // 🔔 [POPUP ALERT & NOTIFIKASI ORDER BARU]
+      if(InpEnableAlert)
+      {
+         Alert(StringFormat("⚡ [ORDER BUKA] %s %s %s Lvl %d | Lot: %.2f | TP/SL: $%.2f",
+                            _Symbol, sideStr, statusStr, step, lot, InpTargetDistance));
+      }
+      if(InpEnablePush)
+      {
+         SendNotification(StringFormat("⚡ [ORDER BUKA] %s %s %s Lvl %d | Lot: %.2f",
+                                       _Symbol, sideStr, statusStr, step, lot));
+      }
+
       EnforcePositionTPSL();
    }
    else
@@ -970,7 +986,7 @@ void UpdateChartComment()
 
    Comment(StringFormat(
       "===========================================================\n"
-      " 🛡️ JARING EMAS v14.00 - AUTO-LOT BALANCE SCALER\n"
+      " 🛡️ JARING EMAS v14.10 - AUTO-LOT BALANCE SCALER\n"
       "===========================================================\n"
       " Simbol        : %s | Timeframe: %s\n"
       " Saldo Akun    : $%.2f | Free Margin: $%.2f\n"
