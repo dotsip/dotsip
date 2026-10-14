@@ -1,5 +1,5 @@
 //+------------------------------------------------------------------+
-//|                                             ZeroLevelBot_Pro.mq5 |
+//|                                                   JaringEmas.mq5 |
 //|  100% Full Auto Directional Crossing & Reverse Martingale        |
 //|  Auto-Calibrated TP/SL + Max Step 6 Safety Hedge Lock            |
 //|                                      https://cindo.pages.dev     |
