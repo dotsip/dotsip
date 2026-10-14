@@ -1,13 +1,13 @@
 //+------------------------------------------------------------------+
 //|                                                   JaringEmas.mq5 |
 //|  100% Dual-Direction: Split Fresh & Recovery Martingale          |
-//|  Fresh Profit Compounding Engine + Anti-SO Watchdog + Direct Run |
+//|  Candle Close Engine + On-Chart Candle Range Overlay + Watchdog  |
 //|                                      https://cindo.pages.dev     |
 //+------------------------------------------------------------------+
 #property copyright   "Mochamad Tabrani & Antigravity AI"
 #property link        "https://cindo.pages.dev"
-#property version     "12.10"
-#property description "Dual-Direction Martingale with Fresh Profit Compounding Engine"
+#property version     "13.00"
+#property description "Dual-Direction Martingale with On-Chart Candle Range Overlay"
 
 #include <Trade\Trade.mqh>
 
@@ -29,7 +29,11 @@ enum ENUM_MAX_STEP_ACTION
 //+------------------------------------------------------------------+
 //| [1] Parameter Input                                              |
 //+------------------------------------------------------------------+
-input group "=== [1] STRATEGI UTAMA & ENTRY ==="
+input group "=== [1] FITUR INDIKATOR RANGE CANDLE ==="
+input bool                  InpShowCandleRange    = true;              // 📊 Tampilkan Angka Range di Atas Candle?
+input int                   InpCandleRangeBars    = 5;                 // 🔢 Jumlah Candle ke Belakang (1 = Candle Sebelum Live Saja)
+
+input group "=== [2] STRATEGI UTAMA & ENTRY ==="
 input bool                  InpEnableBot          = true;              // 🤖 Aktifkan Robot Otomatis?
 input double                InpStartLot           = 0.01;              // Lot Dasar Awal (Fresh Step 1)
 input double                InpLotMultiplier      = 2.0;               // Faktor Pengali Martingale (2.0x)
@@ -40,13 +44,13 @@ input bool                  InpOpenOppositeFresh  = true;              // Buka F
 input bool                  InpReopenAfterTP      = false;             // Buka Langsung setelah Recovery TP? (false = Tunggu Candle Baru)
 input ENUM_MAX_STEP_ACTION  InpMaxStepAction      = ACTION_CLOSE_ALL;  // 🛡️ Aksi jika Max Step Hit (Cegah Stop Out)
 
-input group "=== [2] PELINDUNG PASAR (SAFETY SHIELDS) ==="
+input group "=== [3] PELINDUNG PASAR (SAFETY SHIELDS) ==="
 input int                   InpMaxSpread          = 0;                 // Batas Maksimal Spread (0 = Nonaktif / Bebas Spread)
 input bool                  InpAvoidRollover      = false;             // 🛑 Hindari Trading Jam Rollover (23:55 - 00:10)?
 input double                InpDailyProfitTarget  = 0.0;               // 🎯 Target Profit Harian ($) (0 = Nonaktif)
 input double                InpDailyMaxLoss       = 0.0;               // 🛑 Batas Rugi Harian ($) (0 = Nonaktif)
 
-input group "=== [3] NOTIFIKASI & BROKER ==="
+input group "=== [4] NOTIFIKASI & BROKER ==="
 input bool                  InpEnableAlert        = true;              // Popup Alert di Layar MT5?
 input bool                  InpEnablePush         = false;             // Notifikasi ke HP (MetaQuotes ID)?
 input int                   InpSlippage           = 50;                // Toleransi Slippage (pts)
@@ -72,6 +76,9 @@ bool              g_isSellLocked    = false;
 
 // Timing Bar Baru
 datetime          g_lastBarTime     = 0;
+
+// Prefix Objek Range Candle
+const string      PREFIX_CRANGE     = "CRANGE_";
 
 // Circuit Breaker State
 bool              g_isCircuitBreakerTripped = false;
@@ -115,13 +122,18 @@ int OnInit()
 
    RestoreStateFromOpenPositions();
 
-   Print("=== JaringEmas v12.10 (Fresh Profit Martingale) Aktif ===");
+   // Gambar teks range candle saat EA pertama kali dipasang
+   DrawCandleRangeLabels();
+
+   Print("=== JaringEmas v13.00 (Candle Range Overlay) Aktif ===");
    UpdateChartComment();
    return(INIT_SUCCEEDED);
 }
 
 void OnDeinit(const int reason)
 {
+   // Hapus semua objek teks range candle saat bot dilepas
+   ObjectsDeleteAll(0, PREFIX_CRANGE);
    Comment("");
    Print("=== JaringEmas Dihentikan ===");
 }
@@ -148,6 +160,56 @@ void OnTick()
    }
 
    UpdateChartComment();
+}
+
+//+------------------------------------------------------------------+
+//| [FITUR VISUAL]: Menggambar Nilai Range di Atas Candle            |
+//+------------------------------------------------------------------+
+void DrawCandleRangeLabels()
+{
+   if(!InpShowCandleRange) return;
+
+   int barsToDraw = MathMax(1, InpCandleRangeBars);
+
+   for(int i = 1; i <= barsToDraw; i++)
+   {
+      datetime barTime = iTime(_Symbol, _Period, i);
+      if(barTime == 0) continue;
+
+      double high  = iHigh(_Symbol, _Period, i);
+      double low   = iLow(_Symbol, _Period, i);
+      double open  = iOpen(_Symbol, _Period, i);
+      double close = iClose(_Symbol, _Period, i);
+      double range = high - low;
+
+      // Jarak offset di atas wick tertinggi
+      double offset = MathMax(range * 0.15, 20 * g_point);
+      double textPrice = high + offset;
+
+      string objName = StringFormat("%s%I64d", PREFIX_CRANGE, (long)barTime);
+
+      if(ObjectFind(0, objName) < 0)
+      {
+         ObjectCreate(0, objName, OBJ_TEXT, 0, barTime, textPrice);
+      }
+      else
+      {
+         ObjectMove(0, objName, 0, barTime, textPrice);
+      }
+
+      // Warna: Hijau (Naik) / Merah (Turun)
+      color txtColor = (close >= open) ? clrLime : clrTomato;
+      string txt = StringFormat("R: $%.2f", range);
+
+      ObjectSetString(0, objName, OBJPROP_TEXT, txt);
+      ObjectSetInteger(0, objName, OBJPROP_COLOR, txtColor);
+      ObjectSetInteger(0, objName, OBJPROP_FONTSIZE, 8);
+      ObjectSetString(0, objName, OBJPROP_FONT, "Arial Bold");
+      ObjectSetInteger(0, objName, OBJPROP_ANCHOR, ANCHOR_LOWER);
+      ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
+   }
+   ChartRedraw(0);
 }
 
 //+------------------------------------------------------------------+
@@ -209,6 +271,9 @@ void CheckDirectCandleClose()
    if(open1 <= 0.0 || close1 <= 0.0) return;
 
    g_lastBarTime = currentBarTime;
+
+   // Perbarui gambar angka range candle di chart
+   DrawCandleRangeLabels();
 
    int buyCount  = CountBotPositions(POSITION_TYPE_BUY);
    int sellCount = CountBotPositions(POSITION_TYPE_SELL);
@@ -308,13 +373,11 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                               profit, g_buyStep, g_buyLot);
                   if(InpEnableAlert) Alert(StringFormat("BUY Fresh TP! Lanjut Marti Profit Lot: %.2f", g_buyLot));
 
-                  // Langsung buka posisi baru untuk memaksimalkan profit tren!
                   if(InpEnableBot && !g_isBuyLocked)
                      OpenZeroBotOrder(POSITION_TYPE_BUY, g_buyLot, g_buyStep, STATUS_FRESH);
                }
                else
                {
-                  // Max Step Fresh tercapai -> Panen profit maksimal, reset ke Step 1 (0.01)
                   PrintFormat("👑 [BUY MAX FRESH %d HIT!] Profit: $%.2f. Panen Profit! Reset ke Fresh Step 1 (Lot: %.2f)",
                               InpMaxFreshSteps, profit, InpStartLot);
 
@@ -328,7 +391,6 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
             }
             else // g_buyStatus == STATUS_RECOVERY
             {
-               // 🎉 RECOVERY TUNTAS -> Reset kembali ke Fresh Step 1 (Lot 0.01)
                PrintFormat("🎉 [BUY RECOVERY TP HIT!] Recovery Tuntas! Profit: $%.2f. Reset ke Fresh Lot: %.2f",
                            profit, InpStartLot);
                if(InpEnableAlert) Alert(StringFormat("BUY Recovery Tuntas! Reset ke Fresh Lot: %.2f", InpStartLot));
@@ -346,14 +408,12 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          {
             if(g_buyStatus == STATUS_FRESH)
             {
-               // Beralih ke RECOVERY: Lot dikalikan dari lot terakhir
                double nextLot = NormalizeLotSize(g_buyLot * InpLotMultiplier);
 
                g_buyStatus = STATUS_RECOVERY;
                g_buyStep   = 1;
                g_buyLot    = nextLot;
 
-               // [PERBAIKAN KURUNG DI SINI]
                PrintFormat("🛑 [BUY FRESH SL] Buka 2 Posisi: [A] BUY %.2f RECOVERY & [B] SELL %.2f FRESH", nextLot, nextLot);
                if(InpEnableAlert) Alert(StringFormat("BUY SL! Buka BUY %.2f RECOV & SELL %.2f FRESH", nextLot, nextLot));
 
@@ -408,13 +468,11 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                               profit, g_sellStep, g_sellLot);
                   if(InpEnableAlert) Alert(StringFormat("SELL Fresh TP! Lanjut Marti Profit Lot: %.2f", g_sellLot));
 
-                  // Langsung buka posisi baru untuk memaksimalkan profit tren!
                   if(InpEnableBot && !g_isSellLocked)
                      OpenZeroBotOrder(POSITION_TYPE_SELL, g_sellLot, g_sellStep, STATUS_FRESH);
                }
                else
                {
-                  // Max Step Fresh tercapai -> Panen profit maksimal, reset ke Step 1 (0.01)
                   PrintFormat("👑 [SELL MAX FRESH %d HIT!] Profit: $%.2f. Panen Profit! Reset ke Fresh Step 1 (Lot: %.2f)",
                               InpMaxFreshSteps, profit, InpStartLot);
 
@@ -428,7 +486,6 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
             }
             else // g_sellStatus == STATUS_RECOVERY
             {
-               // 🎉 RECOVERY TUNTAS -> Reset kembali ke Fresh Step 1 (Lot 0.01)
                PrintFormat("🎉 [SELL RECOVERY TP HIT!] Recovery Tuntas! Profit: $%.2f. Reset ke Fresh Lot: %.2f",
                            profit, InpStartLot);
                if(InpEnableAlert) Alert(StringFormat("SELL Recovery Tuntas! Reset ke Fresh Lot: %.2f", InpStartLot));
@@ -446,14 +503,12 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          {
             if(g_sellStatus == STATUS_FRESH)
             {
-               // Beralih ke RECOVERY: Lot dikalikan dari lot terakhir
                double nextLot = NormalizeLotSize(g_sellLot * InpLotMultiplier);
 
                g_sellStatus = STATUS_RECOVERY;
                g_sellStep   = 1;
                g_sellLot    = nextLot;
 
-               // [PERBAIKAN KURUNG DI SINI]
                PrintFormat("🛑 [SELL FRESH SL] Buka 2 Posisi: [A] SELL %.2f RECOVERY & [B] BUY %.2f FRESH", nextLot, nextLot);
                if(InpEnableAlert) Alert(StringFormat("SELL SL! Buka SELL %.2f RECOV & BUY %.2f FRESH", nextLot, nextLot));
 
@@ -795,7 +850,7 @@ void UpdateChartComment()
 
    Comment(StringFormat(
       "===========================================================\n"
-      " 🛡️ JARING EMAS v12.10 - FRESH PROFIT COMPOUNDING\n"
+      " 🛡️ JARING EMAS v13.0 - CANDLE RANGE OVERLAY HUD\n"
       "===========================================================\n"
       " Simbol        : %s | Timeframe: %s\n"
       " Status Robot  : %s\n"
