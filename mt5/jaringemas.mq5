@@ -1,13 +1,13 @@
 //+------------------------------------------------------------------+
 //|                                                   JaringEmas.mq5 |
 //|  100% Dual-Direction: Split Fresh & Recovery Martingale          |
-//|  Candle Close Engine + On-Chart Candle Range Overlay + Watchdog  |
+//|  Candle Close Engine + Dynamic Candle Range Overlay + Watchdog   |
 //|                                      https://cindo.pages.dev     |
 //+------------------------------------------------------------------+
 #property copyright   "Mochamad Tabrani & Antigravity AI"
 #property link        "https://cindo.pages.dev"
-#property version     "13.00"
-#property description "Dual-Direction Martingale with On-Chart Candle Range Overlay"
+#property version     "13.10"
+#property description "Dual-Direction Martingale with Smart Candle Range Overlay (Bull Below, Bear Above)"
 
 #include <Trade\Trade.mqh>
 
@@ -30,7 +30,7 @@ enum ENUM_MAX_STEP_ACTION
 //| [1] Parameter Input                                              |
 //+------------------------------------------------------------------+
 input group "=== [1] FITUR INDIKATOR RANGE CANDLE ==="
-input bool                  InpShowCandleRange    = true;              // 📊 Tampilkan Angka Range di Atas Candle?
+input bool                  InpShowCandleRange    = true;              // 📊 Tampilkan Range (Bull di Bawah, Bear di Atas)?
 input int                   InpCandleRangeBars    = 5;                 // 🔢 Jumlah Candle ke Belakang (1 = Candle Sebelum Live Saja)
 
 input group "=== [2] STRATEGI UTAMA & ENTRY ==="
@@ -125,7 +125,7 @@ int OnInit()
    // Gambar teks range candle saat EA pertama kali dipasang
    DrawCandleRangeLabels();
 
-   Print("=== JaringEmas v13.00 (Candle Range Overlay) Aktif ===");
+   Print("=== JaringEmas v13.10 (Smart Candle Range Overlay) Aktif ===");
    UpdateChartComment();
    return(INIT_SUCCEEDED);
 }
@@ -163,7 +163,7 @@ void OnTick()
 }
 
 //+------------------------------------------------------------------+
-//| [FITUR VISUAL]: Menggambar Nilai Range di Atas Candle            |
+//| [FITUR VISUAL]: Menggambar Range (Bull di Bawah, Bear di Atas)   |
 //+------------------------------------------------------------------+
 void DrawCandleRangeLabels()
 {
@@ -182,9 +182,27 @@ void DrawCandleRangeLabels()
       double close = iClose(_Symbol, _Period, i);
       double range = high - low;
 
-      // Jarak offset di atas wick tertinggi
-      double offset = MathMax(range * 0.15, 20 * g_point);
-      double textPrice = high + offset;
+      // Jarak offset proporsional agar tidak menabrak sumbu candle
+      double offset = MathMax(range * 0.15, 25 * g_point);
+
+      double textPrice;
+      ENUM_ANCHOR_POINT anchorPos;
+      color txtColor;
+
+      // Candle Bullish (Hijau/Naik): Letakkan DI BAWAH Low candle
+      if(close >= open)
+      {
+         textPrice = low - offset;
+         anchorPos = ANCHOR_UPPER; // Anchor atas teks menempel di textPrice, teks menjulur ke bawah
+         txtColor  = clrLime;
+      }
+      // Candle Bearish (Merah/Turun): Letakkan DI ATAS High candle
+      else
+      {
+         textPrice = high + offset;
+         anchorPos = ANCHOR_LOWER; // Anchor bawah teks menempel di textPrice, teks melayang ke atas
+         txtColor  = clrTomato;
+      }
 
       string objName = StringFormat("%s%I64d", PREFIX_CRANGE, (long)barTime);
 
@@ -197,15 +215,13 @@ void DrawCandleRangeLabels()
          ObjectMove(0, objName, 0, barTime, textPrice);
       }
 
-      // Warna: Hijau (Naik) / Merah (Turun)
-      color txtColor = (close >= open) ? clrLime : clrTomato;
       string txt = StringFormat("R: $%.2f", range);
 
       ObjectSetString(0, objName, OBJPROP_TEXT, txt);
       ObjectSetInteger(0, objName, OBJPROP_COLOR, txtColor);
       ObjectSetInteger(0, objName, OBJPROP_FONTSIZE, 8);
       ObjectSetString(0, objName, OBJPROP_FONT, "Arial Bold");
-      ObjectSetInteger(0, objName, OBJPROP_ANCHOR, ANCHOR_LOWER);
+      ObjectSetInteger(0, objName, OBJPROP_ANCHOR, anchorPos);
       ObjectSetInteger(0, objName, OBJPROP_SELECTABLE, false);
       ObjectSetInteger(0, objName, OBJPROP_HIDDEN, true);
    }
@@ -850,7 +866,7 @@ void UpdateChartComment()
 
    Comment(StringFormat(
       "===========================================================\n"
-      " 🛡️ JARING EMAS v13.0 - CANDLE RANGE OVERLAY HUD\n"
+      " 🛡️ JARING EMAS v13.10 - SMART CANDLE RANGE HUD\n"
       "===========================================================\n"
       " Simbol        : %s | Timeframe: %s\n"
       " Status Robot  : %s\n"
