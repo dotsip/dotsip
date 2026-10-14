@@ -1,13 +1,13 @@
 //+------------------------------------------------------------------+
 //|                                                   JaringEmas.mq5 |
 //|  100% Dual-Direction: Split Fresh & Recovery Martingale          |
-//|  Direct Candle Close Engine + Auto-Fallback Execution + Watchdog |
+//|  Fresh Profit Compounding Engine + Anti-SO Watchdog + Direct Run |
 //|                                      https://cindo.pages.dev     |
 //+------------------------------------------------------------------+
 #property copyright   "Mochamad Tabrani & Antigravity AI"
 #property link        "https://cindo.pages.dev"
-#property version     "11.30"
-#property description "Dual-Direction Martingale with Direct Candle Close Execution"
+#property version     "12.10"
+#property description "Dual-Direction Martingale with Fresh Profit Compounding Engine"
 
 #include <Trade\Trade.mqh>
 
@@ -16,13 +16,13 @@
 //+------------------------------------------------------------------+
 enum ENUM_POS_STATUS
 {
-   STATUS_FRESH     = 0, // Posisi FRESH
-   STATUS_RECOVERY  = 1  // Posisi RECOVERY
+   STATUS_FRESH     = 0, // Posisi FRESH (Compounding Saat Profit)
+   STATUS_RECOVERY  = 1  // Posisi RECOVERY (Martingale Pemulihan Rugi)
 };
 
 enum ENUM_MAX_STEP_ACTION
 {
-   ACTION_CLOSE_ALL       = 0, // 🛑 Tutup Semua Posisi (Cut Loss Bersih - Rekomendasi)
+   ACTION_CLOSE_ALL       = 0, // 🛑 Tutup Semua Posisi (Cut Loss Bersih - Aman dari SO)
    ACTION_STOP_NEW_ORDER  = 1  // 🔒 Kunci Bot (Biarkan posisi tersisa menyentuh SL/TP)
 };
 
@@ -33,10 +33,11 @@ input group "=== [1] STRATEGI UTAMA & ENTRY ==="
 input bool                  InpEnableBot          = true;              // 🤖 Aktifkan Robot Otomatis?
 input double                InpStartLot           = 0.01;              // Lot Dasar Awal (Fresh Step 1)
 input double                InpLotMultiplier      = 2.0;               // Faktor Pengali Martingale (2.0x)
-input int                   InpMaxRecoverySteps   = 8;                 // Batas Maksimal Step Recovery (e.g. 8 = Lot 1.28)
+input int                   InpMaxFreshSteps      = 3;                 // 🚀 Batas Max Step Marti PROFIT FRESH (e.g. 0.01->0.02->0.04)
+input int                   InpMaxRecoverySteps   = 8;                 // 🛑 Batas Max Step Marti RECOVERY (e.g. 8 = Lot 1.28)
 input double                InpTargetDistance     = 1.0;               // Jarak TP & SL Presisi ($1.00 = 10 Pips XAUUSD)
 input bool                  InpOpenOppositeFresh  = true;              // Buka FRESH Lawan saat FRESH Kena SL? (Poin 2)
-input bool                  InpReopenAfterTP      = false;             // Buka Langsung setelah TP? (false = Tunggu Candle Baru)
+input bool                  InpReopenAfterTP      = false;             // Buka Langsung setelah Recovery TP? (false = Tunggu Candle Baru)
 input ENUM_MAX_STEP_ACTION  InpMaxStepAction      = ACTION_CLOSE_ALL;  // 🛡️ Aksi jika Max Step Hit (Cegah Stop Out)
 
 input group "=== [2] PELINDUNG PASAR (SAFETY SHIELDS) ==="
@@ -114,7 +115,7 @@ int OnInit()
 
    RestoreStateFromOpenPositions();
 
-   Print("=== JaringEmas v11.30 (Direct Candle Engine) Aktif ===");
+   Print("=== JaringEmas v12.10 (Fresh Profit Martingale) Aktif ===");
    UpdateChartComment();
    return(INIT_SUCCEEDED);
 }
@@ -190,49 +191,32 @@ double GetSafeTargetDistance()
 }
 
 //+------------------------------------------------------------------+
-//| [5] Mesin Pemicu: Direct Candle Close Engine (100% Akurat)       |
+//| [5] Mesin Pemicu: Direct Candle Close Engine                     |
 //+------------------------------------------------------------------+
 void CheckDirectCandleClose()
 {
-   // DETEKSI PERGANTIAN CANDLE DENGAN FUNGSI NATIVE iTime
    datetime currentBarTime = iTime(_Symbol, _Period, 0);
-   if(currentBarTime == 0) return; // Data bar belum siap
+   if(currentBarTime == 0) return;
 
-   if(currentBarTime == g_lastBarTime) return; // Belum ada pergantian candle
+   if(currentBarTime == g_lastBarTime) return; // Belum ada candle baru
 
-   // Cek Filter Rollover
-   if(IsRolloverTime())
-   {
-      Print("⏳ [ENTRY DITUNDA] Sedang jam Rollover Broker (23:55-00:10).");
-      return;
-   }
+   if(IsRolloverTime() || !IsSpreadOK()) return;
 
-   // Cek Filter Spread
-   if(!IsSpreadOK())
-   {
-      long curSpread = SymbolInfoInteger(_Symbol, SYMBOL_SPREAD);
-      PrintFormat("⚠️ [ENTRY DITUNDA] Spread (%d pts) melebihi batas (%d pts).", curSpread, InpMaxSpread);
-      return;
-   }
-
-   // BACA LANGSUNG HARGA OPEN & CLOSE DARI CANDLE [1] YANG BARU SAJA SELESAI
+   // Baca candle [1] yang baru saja selesai
    double open1  = iOpen(_Symbol, _Period, 1);
    double close1 = iClose(_Symbol, _Period, 1);
 
    if(open1 <= 0.0 || close1 <= 0.0) return;
 
-   // UPDATE WAKTU BAR AGAR TIDAK DIULANG PADA TICK BERIKUTNYA
    g_lastBarTime = currentBarTime;
 
    int buyCount  = CountBotPositions(POSITION_TYPE_BUY);
    int sellCount = CountBotPositions(POSITION_TYPE_SELL);
 
-   PrintFormat("🔔 [CANDLE BARU TERBENTUK] Waktu: %s | Open[1]: %.*f | Close[1]: %.*f | Posisi BUY: %d | Posisi SELL: %d",
-               TimeToString(currentBarTime, TIME_MINUTES), g_digits, open1, g_digits, close1, buyCount, sellCount);
+   PrintFormat("🔔 [CANDLE BARU] Waktu: %s | Open[1]: %.*f | Close[1]: %.*f",
+               TimeToString(currentBarTime, TIME_MINUTES), g_digits, open1, g_digits, close1);
 
-   // ========================================================
-   // KONDISI 1: CANDLE TURUN (MERAH / BEARISH) -> ORDER SELL
-   // ========================================================
+   // 1. CANDLE TURUN (MERAH) -> BUKA SELL FRESH
    if(close1 < open1)
    {
       PrintFormat("🔻 [CANDLE TURUN] Close (%.*f) < Open (%.*f) -> Memicu SELL FRESH!", g_digits, close1, g_digits, open1);
@@ -244,14 +228,8 @@ void CheckDirectCandleClose()
          g_sellStep   = 1;
          OpenZeroBotOrder(POSITION_TYPE_SELL, g_sellLot, g_sellStep, g_sellStatus);
       }
-      else
-      {
-         Print("ℹ️ Order SELL ditunda karena Sisi SELL sudah memiliki posisi aktif.");
-      }
    }
-   // ========================================================
-   // KONDISI 2: CANDLE NAIK (HIJAU / BULLISH) -> ORDER BUY
-   // ========================================================
+   // 2. CANDLE NAIK (HIJAU) -> BUKA BUY FRESH
    else if(close1 > open1)
    {
       PrintFormat("🚀 [CANDLE NAIK] Close (%.*f) > Open (%.*f) -> Memicu BUY FRESH!", g_digits, close1, g_digits, open1);
@@ -263,15 +241,11 @@ void CheckDirectCandleClose()
          g_buyStep   = 1;
          OpenZeroBotOrder(POSITION_TYPE_BUY, g_buyLot, g_buyStep, g_buyStatus);
       }
-      else
-      {
-         Print("ℹ️ Order BUY ditunda karena Sisi BUY sudah memiliki posisi aktif.");
-      }
    }
 }
 
 //+------------------------------------------------------------------+
-//| [6] Transaksi: Split Recovery & Fresh (Poin 2, 3, 4 UTUH)        |
+//| [6] Transaksi: Mesin Fresh Compounding & Recovery Martingale     |
 //+------------------------------------------------------------------+
 void OnTradeTransaction(const MqlTradeTransaction& trans,
                         const MqlTradeRequest& request,
@@ -314,36 +288,73 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
       bool isSL = (dealReason == DEAL_REASON_SL || (dealReason != DEAL_REASON_TP && profit < 0));
 
       // ========================================================
-      // SISI BUY
+      // [A] SISI BUY
       // ========================================================
       if(origPosType == POSITION_TYPE_BUY)
       {
+         // --- KASUS: BUY TAKE PROFIT ---
          if(isTP)
          {
-            string tag = (g_buyStatus == STATUS_RECOVERY) ? "RECOVERY TUNTAS" : "FRESH TP";
-            Print(StringFormat("🎯 [BUY %s!] Profit: $%.2f. Reset ke FRESH Step 1 (Lot: %.2f)", tag, profit, InpStartLot));
-            if(InpEnableAlert) Alert(StringFormat("BUY %s! Profit: $%.2f", tag, profit));
+            if(g_buyStatus == STATUS_FRESH)
+            {
+               // 🚀 MARTINGALE PROFIT FRESH (COMPOUNDING)
+               if(g_buyStep < InpMaxFreshSteps)
+               {
+                  g_buyStep++;
+                  g_buyLot = NormalizeLotSize(g_buyLot * InpLotMultiplier);
+                  g_buyStatus = STATUS_FRESH;
 
-            // Poin 4: Kembali ke status FRESH
-            g_buyStatus = STATUS_FRESH;
-            g_buyStep   = 1;
-            g_buyLot    = InpStartLot;
+                  PrintFormat("🚀 [BUY FRESH TP HIT!] Profit: $%.2f. Marti Profit ke BUY FRESH Step %d (Lot: %.2f)!",
+                              profit, g_buyStep, g_buyLot);
+                  if(InpEnableAlert) Alert(StringFormat("BUY Fresh TP! Lanjut Marti Profit Lot: %.2f", g_buyLot));
 
-            if(InpEnableBot && !g_isBuyLocked && InpReopenAfterTP && IsSpreadOK() && !IsRolloverTime())
-               OpenZeroBotOrder(POSITION_TYPE_BUY, g_buyLot, g_buyStep, g_buyStatus);
+                  // Langsung buka posisi baru untuk memaksimalkan profit tren!
+                  if(InpEnableBot && !g_isBuyLocked)
+                     OpenZeroBotOrder(POSITION_TYPE_BUY, g_buyLot, g_buyStep, STATUS_FRESH);
+               }
+               else
+               {
+                  // Max Step Fresh tercapai -> Panen profit maksimal, reset ke Step 1 (0.01)
+                  PrintFormat("👑 [BUY MAX FRESH %d HIT!] Profit: $%.2f. Panen Profit! Reset ke Fresh Step 1 (Lot: %.2f)",
+                              InpMaxFreshSteps, profit, InpStartLot);
+
+                  g_buyStep   = 1;
+                  g_buyLot    = InpStartLot;
+                  g_buyStatus = STATUS_FRESH;
+
+                  if(InpEnableBot && !g_isBuyLocked && InpReopenAfterTP)
+                     OpenZeroBotOrder(POSITION_TYPE_BUY, g_buyLot, g_buyStep, STATUS_FRESH);
+               }
+            }
+            else // g_buyStatus == STATUS_RECOVERY
+            {
+               // 🎉 RECOVERY TUNTAS -> Reset kembali ke Fresh Step 1 (Lot 0.01)
+               PrintFormat("🎉 [BUY RECOVERY TP HIT!] Recovery Tuntas! Profit: $%.2f. Reset ke Fresh Lot: %.2f",
+                           profit, InpStartLot);
+               if(InpEnableAlert) Alert(StringFormat("BUY Recovery Tuntas! Reset ke Fresh Lot: %.2f", InpStartLot));
+
+               g_buyStatus = STATUS_FRESH;
+               g_buyStep   = 1;
+               g_buyLot    = InpStartLot;
+
+               if(InpEnableBot && !g_isBuyLocked && InpReopenAfterTP)
+                  OpenZeroBotOrder(POSITION_TYPE_BUY, g_buyLot, g_buyStep, STATUS_FRESH);
+            }
          }
+         // --- KASUS: BUY STOP LOSS ---
          else if(isSL)
          {
             if(g_buyStatus == STATUS_FRESH)
             {
-               // Poin 2: Buka Posisi A (BUY Recovery) & Posisi B (SELL Fresh)
+               // Beralih ke RECOVERY: Lot dikalikan dari lot terakhir
                double nextLot = NormalizeLotSize(g_buyLot * InpLotMultiplier);
 
                g_buyStatus = STATUS_RECOVERY;
                g_buyStep   = 1;
                g_buyLot    = nextLot;
 
-               Print(StringFormat("🛑 [BUY FRESH SL] Buka 2 Posisi: [A] BUY %.2f RECOVERY & [B] SELL %.2f FRESH", nextLot, nextLot));
+               // [PERBAIKAN KURUNG DI SINI]
+               PrintFormat("🛑 [BUY FRESH SL] Buka 2 Posisi: [A] BUY %.2f RECOVERY & [B] SELL %.2f FRESH", nextLot, nextLot);
                if(InpEnableAlert) Alert(StringFormat("BUY SL! Buka BUY %.2f RECOV & SELL %.2f FRESH", nextLot, nextLot));
 
                if(InpEnableBot && !g_isBuyLocked)
@@ -370,44 +381,81 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                g_buyStep++;
                g_buyLot = NormalizeLotSize(g_buyLot * InpLotMultiplier);
 
-               Print(StringFormat("🛑 [BUY RECOVERY SL] Lanjut BUY RECOVERY Step %d (Lot: %.2f)...", g_buyStep, g_buyLot));
+               PrintFormat("🛑 [BUY RECOVERY SL] Lanjut BUY RECOVERY Step %d (Lot: %.2f)...", g_buyStep, g_buyLot);
                if(InpEnableBot && !g_isBuyLocked)
                   OpenZeroBotOrder(POSITION_TYPE_BUY, g_buyLot, g_buyStep, STATUS_RECOVERY);
             }
          }
       }
       // ========================================================
-      // SISI SELL
+      // [B] SISI SELL
       // ========================================================
       else if(origPosType == POSITION_TYPE_SELL)
       {
+         // --- KASUS: SELL TAKE PROFIT ---
          if(isTP)
          {
-            string tag = (g_sellStatus == STATUS_RECOVERY) ? "RECOVERY TUNTAS" : "FRESH TP";
-            Print(StringFormat("🎯 [SELL %s!] Profit: $%.2f. Reset ke FRESH Step 1 (Lot: %.2f)", tag, profit, InpStartLot));
-            if(InpEnableAlert) Alert(StringFormat("SELL %s! Profit: $%.2f", tag, profit));
+            if(g_sellStatus == STATUS_FRESH)
+            {
+               // 🚀 MARTINGALE PROFIT FRESH (COMPOUNDING)
+               if(g_sellStep < InpMaxFreshSteps)
+               {
+                  g_sellStep++;
+                  g_sellLot = NormalizeLotSize(g_sellLot * InpLotMultiplier);
+                  g_sellStatus = STATUS_FRESH;
 
-            // Poin 4: Kembali ke status FRESH
-            g_sellStatus = STATUS_FRESH;
-            g_sellStep   = 1;
-            g_sellLot    = InpStartLot;
+                  PrintFormat("🚀 [SELL FRESH TP HIT!] Profit: $%.2f. Marti Profit ke SELL FRESH Step %d (Lot: %.2f)!",
+                              profit, g_sellStep, g_sellLot);
+                  if(InpEnableAlert) Alert(StringFormat("SELL Fresh TP! Lanjut Marti Profit Lot: %.2f", g_sellLot));
 
-            if(InpEnableBot && !g_isSellLocked && InpReopenAfterTP && IsSpreadOK() && !IsRolloverTime())
-               OpenZeroBotOrder(POSITION_TYPE_SELL, g_sellLot, g_sellStep, g_sellStatus);
+                  // Langsung buka posisi baru untuk memaksimalkan profit tren!
+                  if(InpEnableBot && !g_isSellLocked)
+                     OpenZeroBotOrder(POSITION_TYPE_SELL, g_sellLot, g_sellStep, STATUS_FRESH);
+               }
+               else
+               {
+                  // Max Step Fresh tercapai -> Panen profit maksimal, reset ke Step 1 (0.01)
+                  PrintFormat("👑 [SELL MAX FRESH %d HIT!] Profit: $%.2f. Panen Profit! Reset ke Fresh Step 1 (Lot: %.2f)",
+                              InpMaxFreshSteps, profit, InpStartLot);
+
+                  g_sellStep   = 1;
+                  g_sellLot    = InpStartLot;
+                  g_sellStatus = STATUS_FRESH;
+
+                  if(InpEnableBot && !g_isSellLocked && InpReopenAfterTP)
+                     OpenZeroBotOrder(POSITION_TYPE_SELL, g_sellLot, g_sellStep, STATUS_FRESH);
+               }
+            }
+            else // g_sellStatus == STATUS_RECOVERY
+            {
+               // 🎉 RECOVERY TUNTAS -> Reset kembali ke Fresh Step 1 (Lot 0.01)
+               PrintFormat("🎉 [SELL RECOVERY TP HIT!] Recovery Tuntas! Profit: $%.2f. Reset ke Fresh Lot: %.2f",
+                           profit, InpStartLot);
+               if(InpEnableAlert) Alert(StringFormat("SELL Recovery Tuntas! Reset ke Fresh Lot: %.2f", InpStartLot));
+
+               g_sellStatus = STATUS_FRESH;
+               g_sellStep   = 1;
+               g_sellLot    = InpStartLot;
+
+               if(InpEnableBot && !g_isSellLocked && InpReopenAfterTP)
+                  OpenZeroBotOrder(POSITION_TYPE_SELL, g_sellLot, g_sellStep, STATUS_FRESH);
+            }
          }
+         // --- KASUS: SELL STOP LOSS ---
          else if(isSL)
          {
             if(g_sellStatus == STATUS_FRESH)
             {
-               // Poin 3: Posisi B (SELL Fresh) kena SL -> Beralih ke SELL RECOVERY
+               // Beralih ke RECOVERY: Lot dikalikan dari lot terakhir
                double nextLot = NormalizeLotSize(g_sellLot * InpLotMultiplier);
 
                g_sellStatus = STATUS_RECOVERY;
                g_sellStep   = 1;
                g_sellLot    = nextLot;
 
-               Print(StringFormat("🛑 [SELL FRESH SL] Buka SELL RECOVERY (Lot: %.2f)", nextLot));
-               if(InpEnableAlert) Alert(StringFormat("SELL SL! Buka SELL %.2f RECOVERY", nextLot));
+               // [PERBAIKAN KURUNG DI SINI]
+               PrintFormat("🛑 [SELL FRESH SL] Buka 2 Posisi: [A] SELL %.2f RECOVERY & [B] BUY %.2f FRESH", nextLot, nextLot);
+               if(InpEnableAlert) Alert(StringFormat("SELL SL! Buka SELL %.2f RECOV & BUY %.2f FRESH", nextLot, nextLot));
 
                if(InpEnableBot && !g_isSellLocked)
                {
@@ -433,7 +481,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
                g_sellStep++;
                g_sellLot = NormalizeLotSize(g_sellLot * InpLotMultiplier);
 
-               Print(StringFormat("🛑 [SELL RECOVERY SL] Lanjut SELL RECOVERY Step %d (Lot: %.2f)...", g_sellStep, g_sellLot));
+               PrintFormat("🛑 [SELL RECOVERY SL] Lanjut SELL RECOVERY Step %d (Lot: %.2f)...", g_sellStep, g_sellLot);
                if(InpEnableBot && !g_isSellLocked)
                   OpenZeroBotOrder(POSITION_TYPE_SELL, g_sellLot, g_sellStep, STATUS_RECOVERY);
             }
@@ -747,7 +795,7 @@ void UpdateChartComment()
 
    Comment(StringFormat(
       "===========================================================\n"
-      " 🛡️ JARING EMAS v11.30 - DIRECT CANDLE ENGINE\n"
+      " 🛡️ JARING EMAS v12.10 - FRESH PROFIT COMPOUNDING\n"
       "===========================================================\n"
       " Simbol        : %s | Timeframe: %s\n"
       " Status Robot  : %s\n"
@@ -758,6 +806,7 @@ void UpdateChartComment()
       " 🟢 SISI BUY   : %s\n"
       " 🔴 SISI SELL  : %s\n"
       "-----------------------------------------------------------\n"
+      " Max Fresh Stp : %d (Marti Profit Saat Menang)\n"
       " Max Recov Stp : %d (Batas Toleransi SL)\n"
       " Multiplier    : %.1fx | TP/SL: $%.2f\n"
       " Magic Number  : %I64d\n"
@@ -766,6 +815,7 @@ void UpdateChartComment()
       curSpread,
       todayPnl,
       buyStatus, sellStatus,
+      InpMaxFreshSteps,
       InpMaxRecoverySteps,
       InpLotMultiplier, InpTargetDistance,
       InpMagicBot
