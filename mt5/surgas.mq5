@@ -2,13 +2,13 @@
 //|                                                 RiskRadarHUD.mq5 |
 //|  Radar Risiko + Fast Bulk Close + One-Click Trading              |
 //|  + Hedge 1:1 + Reverse + Auto Target (+) & Auto Cutloss (-)      |
-//|  + [PRO v4.4] AUTO-CALIBRATED TP/SL (SLIPPAGE-IMMUNE ENGINE)     |
+//|  + [PRO v4.5] AUTO-CALIBRATED TP/SL + MULTI-TONE DISTINCT AUDIO  |
 //|                                      https://cindo.pages.dev     |
 //+------------------------------------------------------------------+
 #property copyright   "Mochamad Tabrani & Antigravity AI"
 #property link        "https://cindo.pages.dev"
-#property version     "4.40"
-#property description "EA Pro: Auto-Calibrated Precision TP/SL (Immune to Slippage & Fast Market)"
+#property version     "4.50"
+#property description "EA Pro: Auto-Calibrated Precision TP/SL + Multi-Tone Distinct Audio System"
 
 #include <Trade\Trade.mqh>
 
@@ -39,9 +39,17 @@ input int             InpDangerPts         = 200;   // Jarak Pts ke SO: Batas St
 input bool            InpShowSOLine        = true;  // Gambar Garis Level Stop Out (MC) di Chart
 input bool            InpShowBELine        = true;  // Gambar Garis Titik Impas (Breakeven) di Chart
 
-input group "=== PENGATURAN NOTIFIKASI / ALERT ==="
-input bool            InpEnableAlert       = true;  // Popup Alert di layar MT5 saat TP/SL/Hedge kena?
-input bool            InpEnablePush        = false; // Kirim Notifikasi ke HP (MetaQuotes ID)?
+input group "=== PENGATURAN NOTIFIKASI & POPUP ==="
+input bool            InpEnableAlert       = false; // 📢 Popup Alert di Layar MT5? (false agar suara PlaySound tidak tertimpa nada Alert bawaan)
+input bool            InpEnablePush        = false; // 📲 Kirim Notifikasi ke HP (MetaQuotes ID)?
+
+input group "=== PENGATURAN SUARA ALERT (DISTINCT AUDIO) ==="
+input bool            InpEnableSound       = true;         // 🔊 Aktifkan Suara Berbeda Tiap Aksi?
+input string          InpSoundOrder        = "ok.wav";     // ⚡ Suara Order Baru Dibuka (Ting)
+input string          InpSoundTP           = "expert.wav"; // 🎯 Suara Take Profit (Melodi Menang)
+input string          InpSoundSL           = "stops.wav";  // 🛑 Suara Kena Stop Loss (Rem/Stops)
+input string          InpSoundTool         = "news.wav";   // 🛠️ Suara Fitur Tool (Hedge/Reverse/Close/Bulk)
+input string          InpSoundWarning      = "timeout.wav";// ⚠️ Suara Peringatan / Bahaya SO / Max Step
 
 input group "=== PENGATURAN FILTER & MAGIC NUMBER ==="
 input int             InpSlippage          = 50;    // Toleransi slippage (pts)
@@ -79,6 +87,7 @@ uint              g_lastUiTick      = 0;
 bool              g_isClosing       = false;
 bool              g_isMinimized     = false;
 ENUM_RISK_STATUS  g_currentStatus   = RISK_SAFE;
+ENUM_RISK_STATUS  g_lastRiskStatus  = RISK_SAFE;
 double            g_tradeLot        = 0.01;
 CTrade            g_trade;
 
@@ -89,6 +98,7 @@ ulong             g_lastManagedDeal = 0;
 double            g_lastPrice       = 0.0;
 
 // Forward Declarations
+void              TriggerSoundAlert(string soundFile, string message = "", bool sendPush = false);
 void              UpdateRiskRadar();
 void              CreateRadarHUD();
 void              DeleteRadarObjects();
@@ -130,7 +140,7 @@ int OnInit()
    DeleteRadarObjects();
    CreateRadarHUD();
 
-   Print("=== RiskRadarHUD v4.40 Auto-Calibrated Precision Aktif ===");
+   Print("=== RiskRadarHUD v4.50 Distinct Audio & Auto-Calibrated TP/SL Aktif ===");
    EventSetTimer(1);
    return(INIT_SUCCEEDED);
 }
@@ -283,9 +293,9 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
       // KASUS 1: TAKE PROFIT MURNI
       if(dealReason == DEAL_REASON_TP || profit > 0)
       {
-         string msg = StringFormat("🎯 [STEP %d TP HIT!] Profit: $%.2f. Reset ke Step 1 & Lanjut Tren...", g_currentStep, profit);
+         string msg = StringFormat("🎯 [STEP %d TP HIT!] Profit: +$%.2f. Reset ke Step 1 & Lanjut Tren...", g_currentStep, profit);
          Print(msg);
-         if(InpEnableAlert) Alert(msg);
+         TriggerSoundAlert(InpSoundTP, msg);
 
          g_currentStep   = 1;
          g_currentBotLot = InpStartLot;
@@ -302,8 +312,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
          {
             string msg = StringFormat("🚨 [MAKSIMAL STEP %d TERCAPAI!] Kunci Akun HEDGE 1:1...", g_currentStep);
             Print(msg);
-            if(InpEnableAlert) Alert(msg);
-            if(InpEnablePush)  SendNotification(msg);
+            TriggerSoundAlert(InpSoundWarning, msg, true);
 
             g_isHedgeLocked = true;
             if(InpHedgeOnMaxStep)
@@ -318,7 +327,7 @@ void OnTradeTransaction(const MqlTradeTransaction& trans,
 
          string msg = StringFormat("🛑 [STEP %d SL HIT!] Balik Arah ke STEP %d (Lot: %.2f)...", g_currentStep - 1, g_currentStep, g_currentBotLot);
          Print(msg);
-         if(InpEnableAlert) Alert(msg);
+         TriggerSoundAlert(InpSoundSL, msg);
 
          if(InpEnableZeroBot && !g_isHedgeLocked)
          {
@@ -356,7 +365,6 @@ void CalibratePositionTPSL(ulong posTicket, double exactPrice, ENUM_POSITION_TYP
    double currentTP = PositionGetDouble(POSITION_TP);
    double currentSL = PositionGetDouble(POSITION_SL);
 
-   // Cek apakah ada pergeseran akibat slippage broker
    if(MathAbs(currentTP - exactTP) > (g_point * 0.1) || MathAbs(currentSL - exactSL) > (g_point * 0.1))
    {
       g_trade.SetExpertMagicNumber(InpMagicBot);
@@ -379,6 +387,7 @@ void OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot)
 
    g_trade.SetExpertMagicNumber(InpMagicBot);
 
+   bool ok = false;
    if(type == POSITION_TYPE_BUY)
    {
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
@@ -388,6 +397,8 @@ void OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot)
       if(g_trade.Buy(lot, _Symbol, ask, sl, tp, StringFormat("ZeroBot BUY Stp%d", g_currentStep)))
       {
          Print(StringFormat("🚀 [BUY DIKIRIM] Lot: %.2f @ %.3f | Menunggu konfirmasi fill untuk kalibrasi...", lot, ask));
+         TriggerSoundAlert(InpSoundOrder, StringFormat("⚡ [ZEROBOT BUY] Step %d | Lot: %.2f @ %.3f", g_currentStep, lot, ask));
+         ok = true;
       }
    }
    else
@@ -399,7 +410,14 @@ void OpenZeroBotOrder(ENUM_POSITION_TYPE type, double lot)
       if(g_trade.Sell(lot, _Symbol, bid, sl, tp, StringFormat("ZeroBot SELL Stp%d", g_currentStep)))
       {
          Print(StringFormat("🚀 [SELL DIKIRIM] Lot: %.2f @ %.3f | Menunggu konfirmasi fill untuk kalibrasi...", lot, bid));
+         TriggerSoundAlert(InpSoundOrder, StringFormat("⚡ [ZEROBOT SELL] Step %d | Lot: %.2f @ %.3f", g_currentStep, lot, bid));
+         ok = true;
       }
+   }
+
+   if(!ok)
+   {
+      TriggerSoundAlert(InpSoundWarning, StringFormat("❌ [ORDER GAGAL] Gagal membuka ZeroBot Step %d (Lot: %.2f)! Cek Margin.", g_currentStep, lot));
    }
 }
 
@@ -427,7 +445,7 @@ void ExecuteEmergencyHedge()
    double netLots = buyLots - sellLots;
    if(MathAbs(netLots) < 0.00001)
    {
-      Alert("Akun sudah terkunci 100% (Hedge 1:1)!");
+      TriggerSoundAlert(InpSoundTool, "🔒 Akun sudah terkunci 100% (Hedge 1:1)!");
       return;
    }
 
@@ -439,13 +457,13 @@ void ExecuteEmergencyHedge()
    {
       double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
       if(g_trade.Sell(hedgeLot, _Symbol, bid, 0, 0, "EMERGENCY HEDGE 1:1"))
-         Alert("🔒 EMERGENCY HEDGE: Membuka SELL " + DoubleToString(hedgeLot, 2) + " Lot. Akun Terkunci Aman!");
+         TriggerSoundAlert(InpSoundTool, "🔒 EMERGENCY HEDGE: Membuka SELL " + DoubleToString(hedgeLot, 2) + " Lot. Akun Terkunci Aman!", true);
    }
    else
    {
       double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       if(g_trade.Buy(hedgeLot, _Symbol, ask, 0, 0, "EMERGENCY HEDGE 1:1"))
-         Alert("🔒 EMERGENCY HEDGE: Membuka BUY " + DoubleToString(hedgeLot, 2) + " Lot. Akun Terkunci Aman!");
+         TriggerSoundAlert(InpSoundTool, "🔒 EMERGENCY HEDGE: Membuka BUY " + DoubleToString(hedgeLot, 2) + " Lot. Akun Terkunci Aman!", true);
    }
 }
 
@@ -477,17 +495,22 @@ void ExecuteReversePosition()
    g_trade.SetExpertMagicNumber(0);
    if(targetLot > 0)
    {
+      bool ok = false;
       if(targetType == POSITION_TYPE_BUY)
       {
          double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-         g_trade.Buy(targetLot, _Symbol, ask, 0, 0, "MANUAL REVERSE BUY");
+         ok = g_trade.Buy(targetLot, _Symbol, ask, 0, 0, "MANUAL REVERSE BUY");
       }
       else
       {
          double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-         g_trade.Sell(targetLot, _Symbol, bid, 0, 0, "MANUAL REVERSE SELL");
+         ok = g_trade.Sell(targetLot, _Symbol, bid, 0, 0, "MANUAL REVERSE SELL");
       }
-      Print("🔄 REVERSE POSITION BERHASIL!");
+      if(ok)
+      {
+         Print("🔄 REVERSE POSITION BERHASIL!");
+         TriggerSoundAlert(InpSoundTool, StringFormat("🔄 [REVERSE] Berhasil membalik posisi ke %s %.2f Lot!", (targetType == POSITION_TYPE_BUY ? "BUY" : "SELL"), targetLot));
+      }
    }
 }
 
@@ -516,7 +539,10 @@ void ExecuteCloseHalf()
       }
    }
    if(closed > 0)
+   {
       Print("✂️ Berhasil menutup 50% volume dari ", closed, " posisi!");
+      TriggerSoundAlert(InpSoundTool, StringFormat("✂️ [CLOSE 50%%] Berhasil memangkas 50%% volume dari %d posisi!", closed));
+   }
 }
 
 void ExecuteOneClickOrder(ENUM_POSITION_TYPE orderType)
@@ -524,10 +550,20 @@ void ExecuteOneClickOrder(ENUM_POSITION_TYPE orderType)
    double price = (orderType == POSITION_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
    g_trade.SetExpertMagicNumber(0);
 
+   bool ok = false;
    if(orderType == POSITION_TYPE_BUY)
-      g_trade.Buy(g_tradeLot, _Symbol, price, 0, 0, "Radar Manual BUY");
+      ok = g_trade.Buy(g_tradeLot, _Symbol, price, 0, 0, "Radar Manual BUY");
    else
-      g_trade.Sell(g_tradeLot, _Symbol, price, 0, 0, "Radar Manual SELL");
+      ok = g_trade.Sell(g_tradeLot, _Symbol, price, 0, 0, "Radar Manual SELL");
+
+   if(ok)
+   {
+      TriggerSoundAlert(InpSoundOrder, StringFormat("⚡ [ONE-CLICK %s] Lot: %.2f @ %.3f", (orderType == POSITION_TYPE_BUY ? "BUY" : "SELL"), g_tradeLot, price));
+   }
+   else
+   {
+      TriggerSoundAlert(InpSoundWarning, StringFormat("❌ [ONE-CLICK GAGAL] Tidak dapat membuka %s %.2f Lot! Cek Free Margin.", (orderType == POSITION_TYPE_BUY ? "BUY" : "SELL"), g_tradeLot));
+   }
 }
 
 ENUM_ORDER_TYPE_FILLING GetOptimalFilling(string symbol)
@@ -569,6 +605,8 @@ void FastBulkClose(bool currentSymbolOnly)
 
    if(total == 0) return;
 
+   TriggerSoundAlert(InpSoundTool, currentSymbolOnly ? "🧹 [BULK CLOSE] Menutup semua posisi chart saat ini..." : "🧹 [BULK CLOSE] Menutup SEMUA posisi akun...");
+
    g_isClosing = true;
    UpdateButtonState(true);
 
@@ -594,7 +632,10 @@ void FastBulkClose(bool currentSymbolOnly)
       request.price        = (pType == POSITION_TYPE_BUY) ? SymbolInfoDouble(sym, SYMBOL_BID) : SymbolInfoDouble(sym, SYMBOL_ASK);
       request.type_filling = GetOptimalFilling(sym);
 
-      OrderSendAsync(request, result);
+      if(!OrderSendAsync(request, result))
+      {
+         Print("Gagal kirim async close ticket #", tickets[i]);
+      }
    }
 }
 
@@ -670,6 +711,25 @@ void OnChartEvent(const int id, const long& lparam, const double& dparam, const 
          FastBulkClose(false);
          ChartRedraw();
       }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Helper Pemutar Suara Khusus & Notifikasi Multi-Tone              |
+//+------------------------------------------------------------------+
+void TriggerSoundAlert(string soundFile, string message = "", bool sendPush = false)
+{
+   if(InpEnableSound && soundFile != "")
+   {
+      PlaySound(soundFile);
+   }
+   if(InpEnableAlert && message != "")
+   {
+      Alert(message);
+   }
+   if(InpEnablePush && sendPush && message != "")
+   {
+      SendNotification(message);
    }
 }
 
@@ -829,6 +889,11 @@ void UpdateRiskRadar()
          statusColor     = COLOR_DANGER;
          statusText      = "🚨 KRITIS / BAHAYA!";
          g_currentStatus = RISK_CRITICAL;
+
+         if(g_lastRiskStatus != RISK_CRITICAL)
+         {
+            TriggerSoundAlert(InpSoundWarning, "🚨 [RADAR RISIKO] Akun dalam Zona KRITIS / BAHAYA! Jarak ke Stop Out menipis.", true);
+         }
       }
       else if(ptsToSO <= InpWarningPts || (marginLevel > 0 && marginLevel <= 300.0))
       {
@@ -837,6 +902,7 @@ void UpdateRiskRadar()
          g_currentStatus = RISK_WARNING;
       }
    }
+   g_lastRiskStatus = g_currentStatus;
 
    string zeroBotBanner = "";
    if(!InpEnableZeroBot)
