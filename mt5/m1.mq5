@@ -1,11 +1,11 @@
 //+------------------------------------------------------------------+
 //|                                              PureM1Scalper.mq5   |
-//|                         Master MQL5 Gold Specialist - Raw Tester |
+//|                         Master MQL5 Gold Specialist - Audio Edit |
 //|                                       Platform: MetaTrader 5     |
 //+------------------------------------------------------------------+
 #property copyright "Master MQL5 Gold Specialist"
 #property link      "https://www.mql5.com"
-#property version   "1.00"
+#property version   "1.10"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -14,13 +14,19 @@ CTrade trade;
 //+------------------------------------------------------------------+
 //| PARAMETER INPUT                                                  |
 //+------------------------------------------------------------------+
-input ulong  InpMagicNumber = 999111; // Magic Number
-input double InpLotSize     = 0.01;   // Ukuran Lot Setiap Menit
+input group "=== PENGATURAN DASAR ==="
+input ulong  InpMagicNumber       = 999111;       // Magic Number
+input double InpLotSize           = 0.01;         // Ukuran Lot Setiap Menit
+
+input group "=== NOTIFIKASI SUARA (AUDIO) ==="
+input bool   InpEnableSound       = true;         // Aktifkan Bunyi Saat Order?
+input string InpSoundBuy          = "ok.wav";     // File Suara Order BUY
+input string InpSoundSell         = "expert.wav"; // File Suara Order SELL
 
 datetime last_m1_bar_time = 0;
 
 //+------------------------------------------------------------------+
-//| Auto-Detect Filling Mode Broker (Anti Gagal Eksekusi)            |
+//| Auto-Detect Filling Mode Broker                                  |
 //+------------------------------------------------------------------+
 void SetBrokerFillingMode()
 {
@@ -39,13 +45,12 @@ void SetBrokerFillingMode()
 int OnInit()
 {
    trade.SetExpertMagicNumber(InpMagicNumber);
-   trade.SetDeviationInPoints(50); // Toleransi slippage gold
+   trade.SetDeviationInPoints(50);
    SetBrokerFillingMode();
 
-   // Dibiarkan 0 agar langsung mengeksekusi order pertama pada tick pertama!
    last_m1_bar_time = 0; 
 
-   Print(">>> [PureM1] EA Dimulai pada ", _Symbol, ". Siap eksekusi 0.01 setiap menit!");
+   Print(">>> [PureM1] EA Dimulai. Fitur Suara: ", (InpEnableSound ? "AKTIF" : "NONAKTIF"));
    return INIT_SUCCEEDED;
 }
 
@@ -62,25 +67,20 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   // 1. Cek apakah ada candle M1 baru (atau tick pertama saat EA baru dipasang)
+   // 1. Cek pergantian candle M1
    datetime current_m1_time = iTime(_Symbol, PERIOD_M1, 0);
-   if(current_m1_time == 0) return; // Data chart belum siap
+   if(current_m1_time == 0) return;
 
    if(current_m1_time == last_m1_bar_time)
    {
-      return; // Belum berganti menit, lewati
+      return; // Belum berganti menit
    }
 
-   // 2. Baca candle 1 (candle M1 yang baru saja tertutup sempurna)
+   // 2. Baca candle 1 (candle yang baru saja selesai ditutup)
    MqlRates rates[];
    ArraySetAsSeries(rates, true);
-   if(CopyRates(_Symbol, PERIOD_M1, 1, 1, rates) < 1)
-   {
-      Print("[PureM1] Menunggu riwayat harga candle M1...");
-      return;
-   }
+   if(CopyRates(_Symbol, PERIOD_M1, 1, 1, rates) < 1) return;
 
-   // Kunci penanda waktu agar hanya eksekusi 1 kali per menit
    last_m1_bar_time = current_m1_time;
 
    double open_price  = rates[0].open;
@@ -90,34 +90,38 @@ void OnTick()
 
    Print("----------------------------------------------------------");
    Print("[PureM1] MENIT BARU: ", TimeToString(current_m1_time, TIME_MINUTES|TIME_SECONDS),
-         " | Candle Tutup: Open=", open_price, " Close=", close_price);
+         " | Open=", open_price, " Close=", close_price);
 
-   // ================= LOGIKA MURNI =================
+   // ================= LOGIKA ORDER & SUARA =================
 
-   // JIKA CLOSE >= OPEN (BULLISH) -> BUY 0.01 (TANPA SL / TANPA TP)
+   // CANDLE HIJAU -> BUY
    if(close_price >= open_price)
    {
-      Print("[PureM1] Sinyal: HIJAU -> Eksekusi BUY 0.01...");
       if(trade.Buy(InpLotSize, _Symbol, ask, 0, 0, "PureM1_Buy"))
       {
          Print("[PureM1] >>> SUKSES BUY 0.01 di harga: ", ask);
+         
+         // Bunyikan Audio BUY
+         if(InpEnableSound) PlaySound(InpSoundBuy);
       }
       else
       {
-         Print("[PureM1] !!! GAGAL BUY. Error: ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
+         Print("[PureM1] !!! GAGAL BUY: ", trade.ResultRetcodeDescription());
       }
    }
-   // JIKA CLOSE < OPEN (BEARISH) -> SELL 0.01 (TANPA SL / TANPA TP)
+   // CANDLE MERAH -> SELL
    else
    {
-      Print("[PureM1] Sinyal: MERAH -> Eksekusi SELL 0.01...");
       if(trade.Sell(InpLotSize, _Symbol, bid, 0, 0, "PureM1_Sell"))
       {
          Print("[PureM1] >>> SUKSES SELL 0.01 di harga: ", bid);
+         
+         // Bunyikan Audio SELL
+         if(InpEnableSound) PlaySound(InpSoundSell);
       }
       else
       {
-         Print("[PureM1] !!! GAGAL SELL. Error: ", trade.ResultRetcode(), " (", trade.ResultRetcodeDescription(), ")");
+         Print("[PureM1] !!! GAGAL SELL: ", trade.ResultRetcodeDescription());
       }
    }
 }
