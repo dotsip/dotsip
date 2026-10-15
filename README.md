@@ -14,7 +14,7 @@
 
 ## 👩‍💻 Tentang Saya
 
-Kami <a href="https://www.mql5.com/en/users/getbos"> **Pengepul**</a> yang trading di MT4 sejak tahun 2010 dan mulai fokus trading di MT5 di tahun 2026. Pernah trading menggunakan broker **InstaForex, Euromax, Primus, FBS, Exness, Tickmill, XM, RoboForex, FxPro, Monex dll** 
+Kami, <a href="https://www.mql5.com/en/users/getbos">**Scaler**</a>, telah trading di MT4 sejak tahun 2010 dan mulai fokus trading di MT5 pada tahun 2026. Kami pernah menggunakan berbagai broker, di antaranya InstaForex, Euromax, Primus, FBS, Exness, Tickmill, XM, RoboForex, FxPro, Monex, dan lainnya.
 
 <img width="1080" height="4" alt="br-animated-line" src="https://user-images.githubusercontent.com/74038190/212284115-f47cd8ff-2ffb-4b04-b5bf-4d1c14c0247f.gif" />
 
