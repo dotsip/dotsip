@@ -6,7 +6,7 @@
 <br/>
 <img src="https://readme-typing-svg.demolab.com/?font=Fira+Code&weight=500&size=22&duration=2800&pause=900&center=true&vCenter=true&width=780&lines=Frontend+Developer+%7C+React+%2F+Next.js+%2F+TypeScript;Exploring+AI+%2F+ML+%2F+Deep+Learning+with+Python;Open+to+international+opportunities" />
 
-[![GitHub](https://img.shields.io/badge/-surgas-181717?style=flat-square&logo=github)](https://github.com/surgahub)
+[![GitHub](https://img.shields.io/badge/-surgahub-181717?style=flat-square&logo=github)](https://github.com/surgahub)
 
 </div>
 
