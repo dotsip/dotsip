@@ -1,12 +1,12 @@
 <div align="center">
 
-<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&height=220&color=gradient&text=Hotel%20Superintelligence%20Proposal&fontSize=55&fontAlignY=35&desc=Frontend%20Developer%20%E2%80%A2%20Surga%20Developer&descAlignY=58&animation=fadeIn" />
+<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&height=220&color=gradient&text=DotSip%20Becik%20Ketitik&fontSize=55&fontAlignY=35&desc=Frontend%20Developer%20%E2%80%A2%20Surga%20Developer&descAlignY=58&animation=fadeIn" />
 
 
 <br/>
 <img src="https://readme-typing-svg.demolab.com/?font=Fira+Code&weight=500&size=22&duration=2800&pause=900&center=true&vCenter=true&width=780&lines=Frontend+Developer+%7C+React+%2F+Next.js+%2F+TypeScript;Exploring+AI+%2F+ML+%2F+Deep+Learning+with+Python;Open+to+international+opportunities" />
 
-[![GitHub](https://img.shields.io/badge/-hotelsip-181717?style=flat-square&logo=github)](https://github.com/hotelsip)
+[![GitHub](https://img.shields.io/badge/-dotsip-181717?style=flat-square&logo=github)](https://github.com/dotsip)
 
 </div>
 
@@ -46,7 +46,7 @@ I'm always open to conversations about:
 
 Feel free to reach out — whether it's about a project, an opportunity, or just to talk tech.
 
-[![GitHub](https://img.shields.io/badge/-Follow_on_GitHub-181717?style=flat-square&logo=github)](https://github.com/surgahub)
+[![GitHub](https://img.shields.io/badge/-Follow_on_GitHub-181717?style=flat-square&logo=github)](https://github.com/dotsip)
 [![Email](https://img.shields.io/badge/-Send_an_Email-EA4335?style=flat-square&logo=gmail&logoColor=white)](mailto:surga@mail.grokbot.com)
 <br/>
 
