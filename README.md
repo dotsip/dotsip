@@ -1,12 +1,12 @@
 <div align="center">
 
-<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&height=220&color=gradient&text=Hotel%20Superintelligence%20Protocol&fontSize=55&fontAlignY=35&desc=Frontend%20Developer%20%E2%80%A2%20Surga%20Developer&descAlignY=58&animation=fadeIn" />
+<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&height=220&color=gradient&text=Hotel%20Superintelligence%20Proposal&fontSize=55&fontAlignY=35&desc=Frontend%20Developer%20%E2%80%A2%20Surga%20Developer&descAlignY=58&animation=fadeIn" />
 
 
 <br/>
 <img src="https://readme-typing-svg.demolab.com/?font=Fira+Code&weight=500&size=22&duration=2800&pause=900&center=true&vCenter=true&width=780&lines=Frontend+Developer+%7C+React+%2F+Next.js+%2F+TypeScript;Exploring+AI+%2F+ML+%2F+Deep+Learning+with+Python;Open+to+international+opportunities" />
 
-[![GitHub](https://img.shields.io/badge/-surgahub-181717?style=flat-square&logo=github)](https://github.com/surgahub)
+[![GitHub](https://img.shields.io/badge/-hotelsip-181717?style=flat-square&logo=github)](https://github.com/hotelsip)
 
 </div>
 
@@ -14,7 +14,7 @@
 
 ## 👩‍💻 Tentang Saya
 
-Kami, <a href="https://www.mql5.com/en/users/getbos">**Scaler**</a>, telah trading di MT4 sejak tahun 2010 dan mulai fokus trading di MT5 pada tahun 2026. Kami pernah menggunakan berbagai broker, di antaranya InstaForex, Euromax, Primus, FBS, Exness, Tickmill, XM, RoboForex, FxPro, Monex, dan lainnya.
+Kami, <a href="https://www.mql5.com/en/users/getbos">**ScalerPip**</a>, telah trading di MT4 sejak tahun 2010 dan mulai fokus trading di MT5 pada tahun 2026. Kami pernah menggunakan berbagai broker, di antaranya InstaForex, Euromax, Primus, FBS, Exness, Tickmill, XM, RoboForex, FxPro, Monex, dan lainnya.
 
 <img width="1080" height="4" alt="br-animated-line" src="https://user-images.githubusercontent.com/74038190/212284115-f47cd8ff-2ffb-4b04-b5bf-4d1c14c0247f.gif" />
 
